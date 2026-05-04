@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.venv/
+.coverage
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+
+# specific
+resources/
