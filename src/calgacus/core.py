@@ -17,10 +17,11 @@ recover ranks for each stegotext token, then walk those ranks under
 
 from __future__ import annotations
 
+import numpy as np
+
 from .model import MLXModel
 from .termination import (
     Trailer,
-    generate_natural_tail,
     secret_side_suffix,
     strip_trailer,
 )
@@ -43,6 +44,84 @@ def _initial_context(model: MLXModel, prefix_ids: list[int]) -> list[int]:
     if bos_id is None:
         return list(prefix_ids)
     return [int(bos_id)] + list(prefix_ids)
+
+
+def _is_canonical(model: MLXModel, tokens: list[int]) -> bool:
+    """Return True iff `tokens` is the canonical tokenization of its
+    detokenized form.
+
+    BPE tokenizers are deterministic but `detokenize -> tokenize` is not
+    always the identity: BPE may produce different boundaries when given
+    the raw text than when given the original tokens. We use this check
+    to filter cover-side tokens to a subset where the round-trip holds.
+    Without it, the decoder's re-tokenization of the visible stegotext
+    would not match the encoder's tokens, and ranks would desynchronize.
+    """
+    text = model.detokenize(tokens)
+    return model.tokenize(text) == tokens
+
+
+def _stable_token_at_rank(
+    model: MLXModel,
+    prefix_no_bos: list[int],
+    rank: int,
+) -> int:
+    """Pick the rank-r-th token from the canonical-stable continuation
+    distribution at the end of `prefix_no_bos`.
+
+    Walks the logit-sorted vocabulary in descending order, counting
+    only tokens that pass `_is_canonical(prefix + [t])`. Returns the
+    rank-th stable token.
+    """
+    inference_ctx = _initial_context(model, prefix_no_bos)
+    logits = model.next_token_logits(inference_ctx)
+
+    np_logits = np.asarray(logits)
+    n = len(np_logits)
+    sorted_ids = np.lexsort((np.arange(n), -np_logits))
+
+    seen = 0
+    for tid in sorted_ids:
+        candidate = prefix_no_bos + [int(tid)]
+        if _is_canonical(model, candidate):
+            if seen == rank:
+                return int(tid)
+            seen += 1
+
+    raise ValueError(
+        f"Ran out of stable tokens before reaching rank {rank} "
+        f"(vocab size {n})."
+    )
+
+
+def _stable_rank_of_token(
+    model: MLXModel,
+    prefix_no_bos: list[int],
+    target: int,
+) -> int:
+    """Compute the rank of `target` in the canonical-stable continuation
+    distribution.
+
+    Counts only stable tokens with strictly higher logit (or equal
+    logit and smaller token ID, matching the lexsort tie-break).
+    """
+    inference_ctx = _initial_context(model, prefix_no_bos)
+    logits = model.next_token_logits(inference_ctx)
+
+    np_logits = np.asarray(logits)
+    n = len(np_logits)
+    sorted_ids = np.lexsort((np.arange(n), -np_logits))
+
+    seen = 0
+    for tid in sorted_ids:
+        tid_int = int(tid)
+        if tid_int == target:
+            return seen
+        candidate = prefix_no_bos + [tid_int]
+        if _is_canonical(model, candidate):
+            seen += 1
+
+    raise ValueError(f"Target token {target} not found in vocabulary.")
 
 
 def ranks_for_secret(
@@ -102,28 +181,31 @@ def cover_from_ranks(
     tail_max_tokens: int = 32,
 ) -> str:
     """Generate the stegotext by walking `ranks` under `cover_prompt`,
-    then appending up to `tail_max_tokens` of natural-sampled tail.
+    then appending up to `tail_max_tokens` of stable greedy tail.
 
-    For each rank `r` in the rank sequence, picks the rank-r-th most
-    probable next token under the cover-side LLM. After the rank-driven
-    payload, switches to greedy sampling for up to `tail_max_tokens`
-    more tokens (or until natural EOS), discarding the EOS so the
-    visible stegotext stays clean prose.
+    Both the rank-driven payload and the natural tail are picked from
+    the canonical-stable continuation distribution at each step. This
+    keeps the visible stegotext round-trippable through the decoder's
+    re-tokenization. The natural tail stops on EOS, which is dropped
+    so the visible stegotext stays clean prose.
 
     Returns the detokenized stegotext, without the cover-prompt prefix.
     """
     k_tokens = model.tokenize(cover_prompt)
-    context = _initial_context(model, k_tokens)
+    cover_tokens: list[int] = []
 
-    payload: list[int] = []
     for r in ranks:
-        logits = model.next_token_logits(context)
-        token_id = model.token_at_rank(logits, r)
-        payload.append(token_id)
-        context.append(token_id)
+        tid = _stable_token_at_rank(model, k_tokens + cover_tokens, r)
+        cover_tokens.append(tid)
 
-    tail = generate_natural_tail(model, context, tail_max_tokens)
-    return model.detokenize(payload + tail)
+    eos = model.eos_token_id
+    for _ in range(tail_max_tokens):
+        tid = _stable_token_at_rank(model, k_tokens + cover_tokens, 0)
+        if tid == eos:
+            break
+        cover_tokens.append(tid)
+
+    return model.detokenize(cover_tokens)
 
 
 def ranks_from_cover(
@@ -133,10 +215,10 @@ def ranks_from_cover(
 ) -> list[int]:
     """Recover the rank sequence from `stego_text` given `cover_prompt`.
 
-    Tokenizes `cover_prompt + stego_text` jointly (BPE-safe split) and
-    slices off the `s_tokens` portion. For each token in `s_tokens`,
-    records its rank in the cover-side LLM's next-token distribution
-    given the running context.
+    Tokenizes `cover_prompt + stego_text` jointly via split_after_prefix
+    to handle BPE merges across the boundary, then for each stegotext
+    token records its rank in the canonical-stable continuation
+    distribution.
 
     The decoder does not yet know which ranks are payload vs. tail;
     `secret_from_ranks` makes that distinction by stopping at EOS in
@@ -144,12 +226,12 @@ def ranks_from_cover(
     """
     k_tokens, s_tokens = split_after_prefix(model, cover_prompt, stego_text)
 
-    context = _initial_context(model, k_tokens)
     ranks: list[int] = []
-    for token_id in s_tokens:
-        logits = model.next_token_logits(context)
-        ranks.append(model.rank_of_token(logits, token_id))
-        context.append(token_id)
+    cover_so_far: list[int] = []
+    for tid in s_tokens:
+        rank = _stable_rank_of_token(model, k_tokens + cover_so_far, tid)
+        ranks.append(rank)
+        cover_so_far.append(tid)
 
     return ranks
 

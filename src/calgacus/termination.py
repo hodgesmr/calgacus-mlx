@@ -111,35 +111,3 @@ def strip_trailer(
             f"may disagree on the trailer mode."
         )
     return recovered_ids[:-trailer_len]
-
-
-def generate_natural_tail(
-    model: MLXModel,
-    context_ids: list[int],
-    max_tokens: int,
-) -> list[int]:
-    """Greedy-sample up to `max_tokens` more tokens from the model under
-    `context_ids`.
-
-    Stops early if EOS is sampled. The EOS itself is NOT included in the
-    returned list, so the visible stegotext stays clean prose. The
-    decoder ignores the tail entirely (it stops at EOS in the
-    reconstructed secret stream), so this is a sender-only knob for
-    natural-sounding endings.
-    """
-    if max_tokens <= 0:
-        return []
-
-    eos = model.eos_token_id
-    tail: list[int] = []
-    context = list(context_ids)
-
-    for _ in range(max_tokens):
-        logits = model.next_token_logits(context)
-        next_id = model.token_at_rank(logits, 0)  # rank 0 = greedy argmax
-        if next_id == eos:
-            break
-        tail.append(next_id)
-        context.append(next_id)
-
-    return tail
