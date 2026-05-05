@@ -1,7 +1,7 @@
 [project]
 name = "calgacus-mlx"
 version = "0.1.0"
-description = "MLX implementation of the Calgacus protocol for LLM-based steganography: hide a meaningful text inside another coherent, plausible text of the same token length."
+description = "MLX implementation of the Calgacus protocol for LLM-based steganography: hide a meaningful text inside another coherent, plausible text of comparable token length."
 readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
