@@ -41,8 +41,8 @@ def split_after_prefix(
     prefix_ids = model.tokenize(prefix)
     full_ids = model.tokenize(prefix + full_text)
     if full_ids[: len(prefix_ids)] != prefix_ids:
-        # Show the end of each tokenization, not the start: BPE merges are
-        # local, so the divergence is almost always at the boundary itself.
+        # Show the end of each tokenization. BPE merges are local
+        # so the divergence is almost always at the boundary itself.
         sample_len = min(8, len(prefix_ids), len(full_ids))
         prefix_tail = prefix_ids[-sample_len:]
         joint_tail = full_ids[len(prefix_ids) - sample_len : len(prefix_ids)]
