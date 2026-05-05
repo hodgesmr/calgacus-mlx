@@ -137,8 +137,7 @@ class MLXModel:
 
         Stable tie-break: encoder and decoder must agree on
         the ordering when two tokens have identical logits, otherwise the
-        protocol breaks. We enforce stability by counting (no argsort
-        needed):
+        protocol breaks. We enforce stability by counting:
 
             rank = (tokens with strictly higher logit)
                  + (tokens with equal logit and smaller ID)
