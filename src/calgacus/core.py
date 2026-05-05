@@ -30,9 +30,9 @@ from .tokens import split_after_prefix
 def _initial_context(model: MLXModel, prefix_ids: list[int]) -> list[int]:
     """Prepend BOS to `prefix_ids` for a model-natural initial context.
 
-    The model expects sequences to start with BOS (it was trained that
-    way). Empty prefix becomes just `[BOS]`, which is the safe minimum
-    context to compute next-token logits. Non-empty prefix becomes
+    The model expects sequences to start with BOS. Empty prefix
+    becomes just `[BOS]`, which is the safe minimum context to
+    compute next-token logits. Non-empty prefix becomes
     `[BOS] + prefix_ids`. Both encoder and decoder do this, so they
     see the same context and produce the same rank sequence.
 
