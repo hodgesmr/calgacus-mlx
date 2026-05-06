@@ -427,7 +427,10 @@ def encode(
 
     if not quiet:
         click.echo(f"Loading model {model_id}...", err=True)
-    mdl = MLXModel(model_id)
+    try:
+        mdl = MLXModel(model_id)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from None
 
     if not quiet:
         click.echo("Encoding...", err=True)
@@ -530,7 +533,10 @@ def decode(
 
     if not quiet:
         click.echo(f"Loading model {model_id}...", err=True)
-    mdl = MLXModel(model_id)
+    try:
+        mdl = MLXModel(model_id)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from None
 
     if not quiet:
         click.echo("Decoding...", err=True)

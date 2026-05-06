@@ -24,7 +24,23 @@ class MLXModel:
 
     def __init__(self, model_id: str):
         self.model_id = model_id
-        self.model, self.tokenizer = load(model_id)
+        try:
+            self.model, self.tokenizer = load(model_id)
+        except ValueError as e:
+            # mlx-lm raises ValueError when the weights file's parameter
+            # set does not match the model class it instantiated.
+            # Common causes: architecture not yet supported by the
+            # installed mlx-lm (e.g. Gemma 3n's Matformer/PLE layout),
+            # or third-party quantization variants whose parameter
+            # names differ from mlx-community's standard layout.
+            raise ValueError(
+                f"Failed to load model {model_id!r}. mlx-lm reported a "
+                f"parameter mismatch, which usually means the model's "
+                f"architecture is not supported by your installed "
+                f"mlx-lm version, or the weights use a non-standard "
+                f"quantization layout. Try a tested model such as "
+                f"'mlx-community/Llama-3.2-3B-Instruct-4bit'."
+            ) from e
         self._eos_token_id = self._resolve_eos()
         self._always_stable_token_ids: frozenset[int] | None = None
 
