@@ -19,6 +19,17 @@ Configuration sources, in increasing precedence:
 
 from __future__ import annotations
 
+import os
+
+# Quiet noisy upstream output before any transformers/huggingface
+# imports trigger. The progress bars are uninformative when the model
+# is cached (almost always after first run), and the
+# `clean_up_tokenization_spaces` warning is harmless and not
+# actionable for calgacus users. `setdefault` so a user can still
+# opt in by setting these in their environment first.
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+
 import sys
 from pathlib import Path
 
