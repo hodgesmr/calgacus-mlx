@@ -267,12 +267,15 @@ def init(
             )
         click.echo()
         click.echo(
-            "Cover prompt (k). This steers your stegotext's topic, style,\n"
-            "and tone. Tip: longer, more specific prompts produce better\n"
-            "cover text. Examples:\n"
-            "  Write a casual Reddit comment about fixing a lawn.\n"
-            "  Compose a glowing review of an Italian restaurant.\n"
-            "  Draft a balanced product review for a stand mixer."
+            "Cover prompt (k). The opening sentence(s) of the kind of\n"
+            "text you want as your stegotext. The model continues from\n"
+            "where you stop, so write it as the first words of a passage,\n"
+            "not as an instruction to the model. Stop mid-thought\n"
+            "(on a colon, a comma, or partway through a sentence) for\n"
+            "the sharpest continuation. Examples:\n"
+            "  My take on Kurt Gödel's incompleteness theorems, after rereading the 1931 paper:\n"
+            "  Bella Vita is a small Italian restaurant in our neighborhood, and last Friday I\n"
+            "  Subject: Friday's all-hands. Team,"
         )
         cover_prompt_text = click.prompt("Cover prompt")
 
@@ -286,11 +289,14 @@ def init(
         else:
             click.echo()
             click.echo(
-                "Secret prefix (k'). Optional. Placed before your secret\n"
-                "to give the LLM context. Useful for non-prose secrets\n"
-                "like code, chess games, or memos. Press Enter to skip.\n"
+                "Secret prefix (k'). Optional incipit placed before your\n"
+                "secret to give the LLM genre context. A well-matched\n"
+                "prefix lowers the secret-side ranks and improves cover\n"
+                "quality. Especially helpful for non-prose secrets (code,\n"
+                "chess PGN, structured data). Press Enter to skip.\n"
                 "Examples:\n"
                 "  The following is a personal essay:\n"
+                "  The following is a brief covert message:\n"
                 "  The following is a chess game in PGN format:\n"
                 "  The following is Python source code:"
             )
