@@ -87,8 +87,17 @@ class MLXModel:
         clean prose suitable for the user. The protocol uses EOS's
         token ID directly for sentinel detection, so stripping it on
         detokenize is always safe.
+
+        `clean_up_tokenization_spaces=False` disables a WordPiece-era
+        post-processing step that would strip spaces before punctuation.
+        BPE tokenizers (Llama 3) encode punctuation-with-space as part
+        of the token, so the cleanup is destructive and must stay off.
         """
-        return self.tokenizer.decode(ids, skip_special_tokens=True)
+        return self.tokenizer.decode(
+            ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=False,
+        )
 
     def next_token_logits(self, ids: list[int]) -> mx.array:
         """Return shape (vocab_size,) logits for the next position after `ids`.
