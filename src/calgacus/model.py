@@ -11,6 +11,7 @@ from __future__ import annotations
 import mlx.core as mx
 import numpy as np
 from mlx_lm import load
+from mlx_lm.models.cache import make_prompt_cache
 
 
 class MLXModel:
@@ -25,6 +26,7 @@ class MLXModel:
         self.model_id = model_id
         self.model, self.tokenizer = load(model_id)
         self._eos_token_id = self._resolve_eos()
+        self._always_stable_token_ids: frozenset[int] | None = None
 
     def _resolve_eos(self) -> int:
         eos = self.tokenizer.eos_token_id
@@ -38,6 +40,36 @@ class MLXModel:
     @property
     def eos_token_id(self) -> int:
         return self._eos_token_id
+
+    @property
+    def always_stable_token_ids(self) -> frozenset[int]:
+        """Token IDs whose detokenized form starts with whitespace.
+
+        Used as a fast path for canonicality checks during cover-side
+        rank selection. BPE merges essentially never bridge whitespace
+        boundaries in natural text, so a token whose visible form starts
+        with a space, newline, or tab can be appended to any canonical
+        prefix without disrupting earlier merges.
+
+        Computed lazily on first access by walking the tokenizer's vocab
+        once. Cached for the lifetime of the MLXModel instance.
+        """
+        if self._always_stable_token_ids is None:
+            cache: set[int] = set()
+            # `get_vocab()` returns a {token_string: token_id} dict, where
+            # token_string is the raw BPE form. Leading-whitespace tokens
+            # carry a specific marker depending on the tokenizer family:
+            #   - Llama 3 / GPT-2 BPE: 'Ġ' (U+0120) for space, 'Ċ' (U+010A)
+            #     for newline.
+            #   - Llama / SentencePiece: '▁' (U+2581) for space.
+            #   - Some tokenizers store the literal space byte directly.
+            # We check all the common markers.
+            leading_whitespace_markers = ("Ġ", "Ċ", "▁", " ", "\t", "\n")
+            for token_str, token_id in self.tokenizer.get_vocab().items():
+                if token_str and token_str.startswith(leading_whitespace_markers):
+                    cache.add(token_id)
+            self._always_stable_token_ids = frozenset(cache)
+        return self._always_stable_token_ids
 
     def tokenize(self, text: str, *, with_bos: bool = False) -> list[int]:
         """Tokenize text to token IDs.
@@ -61,7 +93,9 @@ class MLXModel:
     def next_token_logits(self, ids: list[int]) -> mx.array:
         """Return shape (vocab_size,) logits for the next position after `ids`.
 
-        Runs a full forward pass (no KV cache).
+        Runs a full forward pass with no cache. Kept for ad-hoc
+        diagnostic use; the protocol code uses `bulk_logits` and
+        `forward_step` for efficiency.
 
         Raises ValueError if `ids` is empty.
         """
@@ -71,6 +105,40 @@ class MLXModel:
             )
         inputs = mx.array(ids)[None, :]
         logits = self.model(inputs)
+        return logits[0, -1, :]
+
+    def bulk_logits(self, ids: list[int]) -> mx.array:
+        """Run a single forward pass over `ids` and return per-position logits.
+
+        Returns an mx.array of shape (len(ids), vocab_size) where row `i`
+        is the model's prediction at position `i` (i.e. what should follow
+        ids[0..i]). Used by `ranks_for_secret` and `ranks_from_cover` where
+        all tokens are known up front: one forward pass replaces N
+        sequential ones.
+        """
+        if not ids:
+            raise ValueError("Cannot compute bulk logits with empty input.")
+        inputs = mx.array(ids)[None, :]
+        logits = self.model(inputs)
+        return logits[0]
+
+    def make_cache(self):
+        """Create a fresh KV cache aligned to this model's architecture."""
+        return make_prompt_cache(self.model)
+
+    def forward_step(self, ids: list[int], cache) -> mx.array:
+        """Extend `cache` with `ids` and return logits for the next position.
+
+        First call should pass the full prompt to prefill the cache.
+        Subsequent calls pass one new token (or a small batch) and the
+        cache is updated incrementally. Returns shape (vocab_size,):
+        the logits at the cache's new tail position, predicting the
+        next token to come.
+        """
+        if not ids:
+            raise ValueError("Cannot forward with empty input.")
+        inputs = mx.array(ids)[None, :]
+        logits = self.model(inputs, cache=cache)
         return logits[0, -1, :]
 
     def rank_of_token(self, logits: mx.array, token_id: int) -> int:

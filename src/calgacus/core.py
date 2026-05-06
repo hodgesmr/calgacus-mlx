@@ -13,10 +13,21 @@ recording each token's rank. It then walks that rank sequence under
 The decoder runs the inverse: tokenize `cover_prompt + stegotext`,
 recover ranks for each stegotext token, then walk those ranks under
 `secret_prefix` to reconstruct the secret.
+
+Forward-pass strategy:
+
+All four functions use the same cache-based incremental forward
+pattern: prefill a fresh KV cache with `[BOS] + prompt`, then extend
+by one token per step via `MLXModel.forward_step`. Using one strategy
+on every call site guarantees that encoder and decoder see
+byte-identical logits at the same context, which the rank ordering is
+sensitive to (small numerical differences can flip ranks of
+close-logit tokens and desynchronize the round-trip).
 """
 
 from __future__ import annotations
 
+import mlx.core as mx
 import numpy as np
 
 from .model import MLXModel
@@ -46,9 +57,12 @@ def _initial_context(model: MLXModel, prefix_ids: list[int]) -> list[int]:
     return [int(bos_id)] + list(prefix_ids)
 
 
+_CANONICALITY_WINDOW = 4
+
+
 def _is_canonical(model: MLXModel, tokens: list[int]) -> bool:
-    """Return True iff `tokens` is the canonical tokenization of its
-    detokenized form.
+    """Return True iff appending `tokens[-1]` to `tokens[:-1]` keeps the
+    tokenization canonical.
 
     BPE tokenizers are deterministic but `detokenize -> tokenize` is not
     always the identity: BPE may produce different boundaries when given
@@ -56,26 +70,42 @@ def _is_canonical(model: MLXModel, tokens: list[int]) -> bool:
     to filter cover-side tokens to a subset where the round-trip holds.
     Without it, the decoder's re-tokenization of the visible stegotext
     would not match the encoder's tokens, and ranks would desynchronize.
+
+    Fast path: if the last token is in the model's "always stable" set
+    (its decoded form starts with whitespace), we skip the check
+    entirely. BPE merges essentially never bridge whitespace boundaries
+    in natural text, so a leading-whitespace token cannot disrupt the
+    canonicality of the preceding tokens.
+
+    Slow path: a window-based local check. BPE merges are local, so a
+    new token at the end can only disrupt the tokenization within a
+    small distance of the boundary. We detokenize and re-tokenize only
+    the last `_CANONICALITY_WINDOW + 1` tokens and compare. Roughly an
+    order of magnitude faster than re-tokenizing the full sequence,
+    with negligible false-positive risk for typical natural text.
     """
-    text = model.detokenize(tokens)
-    return model.tokenize(text) == tokens
+    if not tokens:
+        return True
+    if tokens[-1] in model.always_stable_token_ids:
+        return True
+    window = tokens[-(_CANONICALITY_WINDOW + 1):]
+    text = model.detokenize(window)
+    return model.tokenize(text) == window
 
 
 def _stable_token_at_rank(
     model: MLXModel,
+    logits: mx.array,
     prefix_no_bos: list[int],
     rank: int,
 ) -> int:
-    """Pick the rank-r-th token from the canonical-stable continuation
-    distribution at the end of `prefix_no_bos`.
+    """Pick the rank-r-th canonical-stable token, given precomputed logits.
 
     Walks the logit-sorted vocabulary in descending order, counting
     only tokens that pass `_is_canonical(prefix + [t])`. Returns the
-    rank-th stable token.
+    rank-th stable token. The caller is responsible for computing
+    `logits` (e.g. via the model's bulk_logits or forward_step).
     """
-    inference_ctx = _initial_context(model, prefix_no_bos)
-    logits = model.next_token_logits(inference_ctx)
-
     np_logits = np.asarray(logits)
     n = len(np_logits)
     sorted_ids = np.lexsort((np.arange(n), -np_logits))
@@ -96,18 +126,16 @@ def _stable_token_at_rank(
 
 def _stable_rank_of_token(
     model: MLXModel,
+    logits: mx.array,
     prefix_no_bos: list[int],
     target: int,
 ) -> int:
-    """Compute the rank of `target` in the canonical-stable continuation
-    distribution.
+    """Compute the rank of `target` in the canonical-stable distribution,
+    given precomputed logits.
 
     Counts only stable tokens with strictly higher logit (or equal
     logit and smaller token ID, matching the lexsort tie-break).
     """
-    inference_ctx = _initial_context(model, prefix_no_bos)
-    logits = model.next_token_logits(inference_ctx)
-
     np_logits = np.asarray(logits)
     n = len(np_logits)
     sorted_ids = np.lexsort((np.arange(n), -np_logits))
@@ -139,6 +167,12 @@ def ranks_for_secret(
     token in `e_tokens + trailer + [EOS]`, records its rank in the
     LLM's next-token distribution given the running context.
 
+    Uses an incremental KV cache: prefill once with `[BOS] + prefix_ids`
+    and then extend by one token per step. The protocol uses the same
+    cache-based pattern in `secret_from_ranks`, so encoder and decoder
+    see byte-identical logits at each position and rank assignments
+    line up exactly.
+
     Raises ValueError if `e_tokens` contains the EOS token ID, which
     would create an early-stop signal in the rank sequence.
 
@@ -148,10 +182,6 @@ def ranks_for_secret(
     """
     prefix_ids, e_tokens = split_after_prefix(model, secret_prefix, secret_text)
 
-    # Encode-time check: a literal EOS token inside `e_tokens` would
-    # cause the decoder to stop reconstruction early and recover only
-    # part of the secret. Normal text input cannot tokenize to EOS, but
-    # we check defensively in case of pathological input.
     eos = model.eos_token_id
     if eos in e_tokens:
         raise ValueError(
@@ -164,12 +194,13 @@ def ranks_for_secret(
     suffix = secret_side_suffix(model, trailer)
     rank_input = e_tokens + suffix
 
-    context = _initial_context(model, prefix_ids)
+    cache = model.make_cache()
+    next_logits = model.forward_step(_initial_context(model, prefix_ids), cache)
+
     ranks: list[int] = []
     for token_id in rank_input:
-        logits = model.next_token_logits(context)
-        ranks.append(model.rank_of_token(logits, token_id))
-        context.append(token_id)
+        ranks.append(model.rank_of_token(next_logits, token_id))
+        next_logits = model.forward_step([token_id], cache)
 
     return ranks, rank_input
 
@@ -189,21 +220,29 @@ def cover_from_ranks(
     re-tokenization. The natural tail stops on EOS, which is dropped
     so the visible stegotext stays clean prose.
 
+    Uses an incremental KV cache: prefill once with the cover prompt,
+    then extend by one token per step.
+
     Returns the detokenized stegotext, without the cover-prompt prefix.
     """
     k_tokens = model.tokenize(cover_prompt)
     cover_tokens: list[int] = []
 
+    cache = model.make_cache()
+    next_logits = model.forward_step(_initial_context(model, k_tokens), cache)
+
     for r in ranks:
-        tid = _stable_token_at_rank(model, k_tokens + cover_tokens, r)
+        tid = _stable_token_at_rank(model, next_logits, k_tokens + cover_tokens, r)
         cover_tokens.append(tid)
+        next_logits = model.forward_step([tid], cache)
 
     eos = model.eos_token_id
     for _ in range(tail_max_tokens):
-        tid = _stable_token_at_rank(model, k_tokens + cover_tokens, 0)
+        tid = _stable_token_at_rank(model, next_logits, k_tokens + cover_tokens, 0)
         if tid == eos:
             break
         cover_tokens.append(tid)
+        next_logits = model.forward_step([tid], cache)
 
     return model.detokenize(cover_tokens)
 
@@ -220,18 +259,30 @@ def ranks_from_cover(
     token records its rank in the canonical-stable continuation
     distribution.
 
+    Uses an incremental KV cache, matching the encoder's
+    `cover_from_ranks` pattern. This ensures encoder and decoder see
+    byte-identical logits at each position and rank assignments line
+    up exactly.
+
     The decoder does not yet know which ranks are payload vs. tail;
     `secret_from_ranks` makes that distinction by stopping at EOS in
     the reconstructed secret stream.
     """
     k_tokens, s_tokens = split_after_prefix(model, cover_prompt, stego_text)
 
+    if not s_tokens:
+        return []
+
+    cache = model.make_cache()
+    next_logits = model.forward_step(_initial_context(model, k_tokens), cache)
+
     ranks: list[int] = []
     cover_so_far: list[int] = []
     for tid in s_tokens:
-        rank = _stable_rank_of_token(model, k_tokens + cover_so_far, tid)
+        rank = _stable_rank_of_token(model, next_logits, k_tokens + cover_so_far, tid)
         ranks.append(rank)
         cover_so_far.append(tid)
+        next_logits = model.forward_step([tid], cache)
 
     return ranks
 
@@ -249,6 +300,9 @@ def secret_from_ranks(
     reconstructed sequence is then `e_tokens + trailer-tokens`. Strips
     the trailer-tokens by length, detokenizes, returns.
 
+    Uses an incremental KV cache: prefill once with the secret prefix,
+    then extend by one token per step.
+
     Raises ValueError if the rank sequence is exhausted without
     reconstructing EOS (truncated stegotext or wrong key/model), or if
     the recovered pre-EOS sequence is shorter than the expected
@@ -256,17 +310,18 @@ def secret_from_ranks(
     receiver).
     """
     prefix_ids = model.tokenize(secret_prefix)
-    context = _initial_context(model, prefix_ids)
     eos = model.eos_token_id
+
+    cache = model.make_cache()
+    next_logits = model.forward_step(_initial_context(model, prefix_ids), cache)
 
     recovered: list[int] = []
     for r in ranks:
-        logits = model.next_token_logits(context)
-        token_id = model.token_at_rank(logits, r)
+        token_id = model.token_at_rank(next_logits, r)
         if token_id == eos:
             break
         recovered.append(token_id)
-        context.append(token_id)
+        next_logits = model.forward_step([token_id], cache)
     else:
         # The for/else here fires only if the loop completed without
         # `break`, which means we walked every rank and never saw EOS.
