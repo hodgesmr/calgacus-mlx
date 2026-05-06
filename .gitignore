@@ -9,6 +9,9 @@ build/
 .venv/
 .coverage
 
+# macOS
+.DS_Store
+
 # Docker
 .docker/
 
