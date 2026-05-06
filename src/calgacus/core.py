@@ -161,11 +161,18 @@ def ranks_for_secret(
     """Compute the rank sequence for `secret_text + trailer + [EOS]` under
     `secret_prefix`.
 
-    Tokenizes `secret_prefix + secret_text` jointly (so BPE merges
-    across the boundary are handled cleanly) and slices off the
-    `e_tokens` portion. Appends the trailer-tokens and EOS. For each
-    token in `e_tokens + trailer + [EOS]`, records its rank in the
-    LLM's next-token distribution given the running context.
+    Tokenizes `secret_prefix` and `secret_text` **separately** and
+    concatenates them. We deliberately do not use joint tokenization
+    on the secret side: BPE often re-merges across the boundary
+    (e.g. `":"` plus `" "` plus `"The"` becomes `":"` plus `" The"`
+    when joint-tokenized), which would force the user to find a magic
+    separator. With separate tokenization, the model sees a slightly
+    non-canonical sequence at the boundary, but encoder and decoder
+    agree on it perfectly, so round-trip is exact.
+
+    Appends the trailer-tokens and EOS. For each token in
+    `e_tokens + trailer + [EOS]`, records its rank in the LLM's
+    next-token distribution given the running context.
 
     Uses an incremental KV cache: prefill once with `[BOS] + prefix_ids`
     and then extend by one token per step. The protocol uses the same
@@ -180,7 +187,18 @@ def ranks_for_secret(
         ranks: one int per (e + trailer + EOS) token.
         secret_ids: the actual token IDs that produced these ranks.
     """
-    prefix_ids, e_tokens = split_after_prefix(model, secret_prefix, secret_text)
+    prefix_ids = model.tokenize(secret_prefix)
+    # Prepend a space to `secret_text` before tokenizing so the first
+    # secret token is the leading-space-aware variant (e.g. " hello"
+    # rather than "hello"). Without this, secrets that start with a
+    # non-whitespace character land at unusually high rank at position
+    # 0 (the model expects a leading-space token after natural prose),
+    # which the cover-side encoder then has to reach into the deep
+    # tail of the cover distribution to encode, producing visibly
+    # off-distribution tokens (foreign scripts, rare unicode) at the
+    # start of the stegotext. The decoder strips this prepended space
+    # in `secret_from_ranks`.
+    e_tokens = model.tokenize(" " + secret_text)
 
     eos = model.eos_token_id
     if eos in e_tokens:
@@ -334,7 +352,15 @@ def secret_from_ranks(
         )
 
     e_tokens = strip_trailer(model, recovered, trailer)
-    return model.detokenize(e_tokens)
+    text = model.detokenize(e_tokens)
+    # Strip the single leading space that `ranks_for_secret` prepended
+    # to `secret_text` before tokenizing. If the user's original secret
+    # started with whitespace, only the encoder's added space is
+    # removed; subsequent leading whitespace from the user's input is
+    # preserved.
+    if text.startswith(" "):
+        text = text[1:]
+    return text
 
 
 def encode(

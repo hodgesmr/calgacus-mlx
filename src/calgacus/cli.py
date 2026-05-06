@@ -425,12 +425,15 @@ def encode(
 
     if not quiet:
         click.echo("Encoding...", err=True)
-    stego = core.encode(
-        mdl, effective_prompt, secret_text,
-        secret_prefix=secret_prefix_text,
-        trailer=trailer_enum,
-        tail_max_tokens=tail_max_tokens,
-    )
+    try:
+        stego = core.encode(
+            mdl, effective_prompt, secret_text,
+            secret_prefix=secret_prefix_text,
+            trailer=trailer_enum,
+            tail_max_tokens=tail_max_tokens,
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from None
 
     if output:
         output.write_text(stego, encoding="utf-8")
@@ -525,11 +528,14 @@ def decode(
 
     if not quiet:
         click.echo("Decoding...", err=True)
-    secret_text = core.decode(
-        mdl, effective_prompt, stego_text,
-        secret_prefix=secret_prefix_text,
-        trailer=trailer_enum,
-    )
+    try:
+        secret_text = core.decode(
+            mdl, effective_prompt, stego_text,
+            secret_prefix=secret_prefix_text,
+            trailer=trailer_enum,
+        )
+    except ValueError as e:
+        raise click.ClickException(str(e)) from None
 
     if output:
         output.write_text(secret_text, encoding="utf-8")
