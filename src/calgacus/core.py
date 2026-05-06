@@ -98,13 +98,22 @@ def _stable_token_at_rank(
     logits: mx.array,
     prefix_no_bos: list[int],
     rank: int,
+    *,
+    leading_space_only: bool = False,
 ) -> int:
     """Pick the rank-r-th canonical-stable token, given precomputed logits.
 
     Walks the logit-sorted vocabulary in descending order, counting
     only tokens that pass `_is_canonical(prefix + [t])`. Returns the
-    rank-th stable token. The caller is responsible for computing
-    `logits` (e.g. via the model's bulk_logits or forward_step).
+    rank-th stable token.
+
+    If `leading_space_only` is True, candidates are further restricted
+    to tokens whose decoded form starts with whitespace (the model's
+    "always stable" set). Used by the cover-side encoder at position 0
+    to guarantee the visible stegotext starts with a leading-space
+    token; the encoder then lstrips one space from the output and the
+    decoder prepends one before tokenizing, so the stegotext is
+    portable across transports that mangle leading whitespace.
     """
     np_logits = np.asarray(logits)
     n = len(np_logits)
@@ -112,10 +121,13 @@ def _stable_token_at_rank(
 
     seen = 0
     for tid in sorted_ids:
-        candidate = prefix_no_bos + [int(tid)]
+        tid_int = int(tid)
+        if leading_space_only and tid_int not in model.always_stable_token_ids:
+            continue
+        candidate = prefix_no_bos + [tid_int]
         if _is_canonical(model, candidate):
             if seen == rank:
-                return int(tid)
+                return tid_int
             seen += 1
 
     raise ValueError(
@@ -129,12 +141,18 @@ def _stable_rank_of_token(
     logits: mx.array,
     prefix_no_bos: list[int],
     target: int,
+    *,
+    leading_space_only: bool = False,
 ) -> int:
     """Compute the rank of `target` in the canonical-stable distribution,
     given precomputed logits.
 
     Counts only stable tokens with strictly higher logit (or equal
     logit and smaller token ID, matching the lexsort tie-break).
+
+    If `leading_space_only` is True, only tokens whose decoded form
+    starts with whitespace are counted (matching the encoder's
+    cover-position-0 restriction).
     """
     np_logits = np.asarray(logits)
     n = len(np_logits)
@@ -145,6 +163,8 @@ def _stable_rank_of_token(
         tid_int = int(tid)
         if tid_int == target:
             return seen
+        if leading_space_only and tid_int not in model.always_stable_token_ids:
+            continue
         candidate = prefix_no_bos + [tid_int]
         if _is_canonical(model, candidate):
             seen += 1
@@ -249,8 +269,19 @@ def cover_from_ranks(
     cache = model.make_cache()
     next_logits = model.forward_step(_initial_context(model, k_tokens), cache)
 
-    for r in ranks:
-        tid = _stable_token_at_rank(model, next_logits, k_tokens + cover_tokens, r)
+    for i, r in enumerate(ranks):
+        # Restrict the very first cover token to a leading-space-aware
+        # token. The model's natural distribution at this position
+        # already heavily favors leading-space tokens, so this rarely
+        # changes behavior in practice; it just guarantees that the
+        # visible stegotext starts with one space, which the encoder
+        # then strips and the decoder prepends. That symmetric pair
+        # makes the stegotext portable across transports that mangle
+        # leading whitespace.
+        tid = _stable_token_at_rank(
+            model, next_logits, k_tokens + cover_tokens, r,
+            leading_space_only=(i == 0),
+        )
         cover_tokens.append(tid)
         next_logits = model.forward_step([tid], cache)
 
@@ -262,7 +293,14 @@ def cover_from_ranks(
         cover_tokens.append(tid)
         next_logits = model.forward_step([tid], cache)
 
-    return model.detokenize(cover_tokens)
+    text = model.detokenize(cover_tokens)
+    # Strip a single leading space if present. The encoder's first
+    # cover token is restricted to be leading-space-aware, so this
+    # almost always strips exactly one space. The decoder prepends one
+    # space before tokenizing, recovering the canonical form.
+    if text.startswith(" "):
+        text = text[1:]
+    return text
 
 
 def ranks_from_cover(
@@ -286,7 +324,14 @@ def ranks_from_cover(
     `secret_from_ranks` makes that distinction by stopping at EOS in
     the reconstructed secret stream.
     """
-    k_tokens, s_tokens = split_after_prefix(model, cover_prompt, stego_text)
+    # Normalize leading whitespace: the encoder strips a single leading
+    # space from its output for portability across whitespace-mangling
+    # transports. We lstrip any leading whitespace the user's input
+    # might have (extra spaces, accidentally added) and then prepend a
+    # canonical single space, which matches the encoder's pre-strip
+    # form and gives the joint tokenization the encoder produced.
+    normalized_stego = " " + stego_text.lstrip()
+    k_tokens, s_tokens = split_after_prefix(model, cover_prompt, normalized_stego)
 
     if not s_tokens:
         return []
@@ -296,8 +341,11 @@ def ranks_from_cover(
 
     ranks: list[int] = []
     cover_so_far: list[int] = []
-    for tid in s_tokens:
-        rank = _stable_rank_of_token(model, next_logits, k_tokens + cover_so_far, tid)
+    for i, tid in enumerate(s_tokens):
+        rank = _stable_rank_of_token(
+            model, next_logits, k_tokens + cover_so_far, tid,
+            leading_space_only=(i == 0),
+        )
         ranks.append(rank)
         cover_so_far.append(tid)
         next_logits = model.forward_step([tid], cache)
