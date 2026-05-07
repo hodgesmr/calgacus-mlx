@@ -41,6 +41,7 @@ class MLXModel:
 
     def __init__(self, model_id: str):
         self.model_id = model_id
+        self._leading_space_token_ids: frozenset[int] | None = None
         try:
             self.model, self.tokenizer = load(model_id)
         except ValueError as e:
@@ -103,6 +104,33 @@ class MLXModel:
                     cache.add(token_id)
             self._always_stable_token_ids = frozenset(cache)
         return self._always_stable_token_ids
+
+    @property
+    def leading_space_token_ids(self) -> frozenset[int]:
+        """Token IDs whose detokenized form starts with a regular space.
+
+        Stricter than `always_stable_token_ids`: this excludes newline-
+        and tab-prefixed tokens (e.g. Ġ but not Ċ in Llama 3 BPE).
+        Used by the cover-side encoder to restrict the position-0 token
+        to a space-leading variant so the visible stegotext begins at
+        a word boundary, not on a blank line. Necessary because
+        `cover_from_ranks` strips exactly one leading space from the
+        emitted text for whitespace portability; if the picked token
+        were newline-leading, the lstrip would not consume it and the
+        stegotext would visibly begin with one or more blank lines.
+
+        Computed lazily on first access. Cached for the lifetime of
+        the MLXModel instance.
+        """
+        if self._leading_space_token_ids is None:
+            cache: set[int] = set()
+            # Just regular-space prefixes, not tab or newline.
+            leading_space_markers = ("Ġ", "▁", " ")
+            for token_str, token_id in self.tokenizer.get_vocab().items():
+                if token_str and token_str.startswith(leading_space_markers):
+                    cache.add(token_id)
+            self._leading_space_token_ids = frozenset(cache)
+        return self._leading_space_token_ids
 
     def tokenize(self, text: str, *, with_bos: bool = False) -> list[int]:
         """Tokenize text to token IDs.

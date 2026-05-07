@@ -136,11 +136,12 @@ def _stable_token_at_rank(
     rank-th stable token.
 
     If `leading_space_only` is True, candidates are further restricted
-    to tokens whose decoded form starts with whitespace (the model's
-    "always stable" set). Used by the cover-side encoder at position 0
-    to guarantee the visible stegotext starts with a leading-space
-    token; the encoder then lstrips one space from the output and the
-    decoder prepends one before tokenizing, so the stegotext is
+    to tokens whose decoded form starts with a regular space (the
+    model's `leading_space_token_ids` set, which excludes newline-
+    and tab-prefix tokens). Used by the cover-side encoder at
+    position 0 to guarantee the visible stegotext starts with one
+    space and a word; the encoder then lstrips that one space and
+    the decoder prepends one before tokenizing, so the stegotext is
     portable across transports that mangle leading whitespace.
     """
     np_logits = np.asarray(logits)
@@ -150,7 +151,7 @@ def _stable_token_at_rank(
     seen = 0
     for tid in sorted_ids:
         tid_int = int(tid)
-        if leading_space_only and tid_int not in model.always_stable_token_ids:
+        if leading_space_only and tid_int not in model.leading_space_token_ids:
             continue
         candidate = prefix_no_bos + [tid_int]
         if _is_canonical(model, candidate):
@@ -191,7 +192,7 @@ def _stable_rank_of_token(
         tid_int = int(tid)
         if tid_int == target:
             return seen
-        if leading_space_only and tid_int not in model.always_stable_token_ids:
+        if leading_space_only and tid_int not in model.leading_space_token_ids:
             continue
         candidate = prefix_no_bos + [tid_int]
         if _is_canonical(model, candidate):
