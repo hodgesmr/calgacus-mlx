@@ -59,6 +59,34 @@ def _initial_context(model: MLXModel, prefix_ids: list[int]) -> list[int]:
 
 _CANONICALITY_WINDOW = 4
 
+# Heuristic stopper for the natural-tail loop. The tail extends the
+# rank-driven cover with greedy generation until the model wants to
+# stop or we hit a sentence boundary. _TAIL_TERMINATORS are the
+# sentence-final punctuation we treat as "done"; _TAIL_TRAILING_PUNCT
+# is closing punctuation/quotes that may follow a terminator and
+# should be peeled off before the terminator check.
+_TAIL_TERMINATORS = ".!?"
+_TAIL_TRAILING_PUNCT = "\"'`)]}"
+_TAIL_LOOKBACK = 3
+
+
+def _ends_on_sentence_terminator(model: MLXModel, cover_tokens: list[int]) -> bool:
+    """Return True if the cover so far ends on a sentence terminator.
+
+    Detokenizes the last few cover tokens, strips trailing whitespace
+    and any closing quotes/brackets that legitimately follow a
+    terminator (`."` `?'` `.)`), and checks whether the resulting
+    last character is a sentence-ending punctuation. Used by the
+    natural-tail loop to land on a graceful ending instead of running
+    to `tail_max_tokens`.
+    """
+    if not cover_tokens:
+        return False
+    recent = model.detokenize(cover_tokens[-_TAIL_LOOKBACK:]).rstrip()
+    while recent and recent[-1] in _TAIL_TRAILING_PUNCT:
+        recent = recent[:-1]
+    return bool(recent) and recent[-1] in _TAIL_TERMINATORS
+
 
 def _is_canonical(model: MLXModel, tokens: list[int]) -> bool:
     """Return True iff appending `tokens[-1]` to `tokens[:-1]` keeps the
@@ -287,9 +315,24 @@ def cover_from_ranks(
 
     eos = model.eos_token_id
     for _ in range(tail_max_tokens):
-        tid = _stable_token_at_rank(model, next_logits, k_tokens + cover_tokens, 0)
-        if tid == eos:
+        # Stop if the cover already ends on a sentence terminator
+        # (with optional trailing whitespace and closing
+        # quotes/brackets). The rank-driven payload may have landed
+        # cleanly, in which case we don't extend it. After the tail
+        # appends a terminating token below, the next iteration's
+        # check fires here and we stop.
+        if _ends_on_sentence_terminator(model, cover_tokens):
             break
+        # Stop when the model's actual greedy top is EOS.
+        # `_stable_token_at_rank` filters EOS via canonicality
+        # (detokenize strips special tokens, so the round-trip check
+        # always fails for an EOS-ending candidate), so we check the
+        # unfiltered top-1 directly. EOS as a cover token would also
+        # break round-trip, so we never *append* EOS; we use it only
+        # as a stop signal.
+        if model.token_at_rank(next_logits, 0) == eos:
+            break
+        tid = _stable_token_at_rank(model, next_logits, k_tokens + cover_tokens, 0)
         cover_tokens.append(tid)
         next_logits = model.forward_step([tid], cache)
 
