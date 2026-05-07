@@ -14,6 +14,23 @@ from mlx_lm import load
 from mlx_lm.models.cache import make_prompt_cache
 
 
+def _to_float32(logits: mx.array) -> mx.array:
+    """Normalize logits to float32 before they leave the wrapper.
+
+    Different mlx-lm model implementations return logits in different
+    dtypes: some cast to float32 in their LM head (Llama 3.2), others
+    leave logits in bfloat16 (Qwen3, some Gemma variants). numpy has
+    no native bfloat16 dtype, so `np.asarray(bf16_array)` errors with
+    a buffer-protocol mismatch ("Item size 2 ... format string B").
+    We do all rank arithmetic in numpy via np.asarray, so normalize
+    here once. The cast is exact (bf16 -> f32 widens) and operates
+    only on the final logits slice, so the cost is negligible.
+    """
+    if logits.dtype != mx.float32:
+        return logits.astype(mx.float32)
+    return logits
+
+
 class MLXModel:
     """Wrapper over mlx-lm's `load()` with the small surface calgacus needs.
 
@@ -130,7 +147,7 @@ class MLXModel:
             )
         inputs = mx.array(ids)[None, :]
         logits = self.model(inputs)
-        return logits[0, -1, :]
+        return _to_float32(logits[0, -1, :])
 
     def bulk_logits(self, ids: list[int]) -> mx.array:
         """Run a single forward pass over `ids` and return per-position logits.
@@ -145,7 +162,7 @@ class MLXModel:
             raise ValueError("Cannot compute bulk logits with empty input.")
         inputs = mx.array(ids)[None, :]
         logits = self.model(inputs)
-        return logits[0]
+        return _to_float32(logits[0])
 
     def make_cache(self):
         """Create a fresh KV cache aligned to this model's architecture."""
@@ -164,7 +181,7 @@ class MLXModel:
             raise ValueError("Cannot forward with empty input.")
         inputs = mx.array(ids)[None, :]
         logits = self.model(inputs, cache=cache)
-        return logits[0, -1, :]
+        return _to_float32(logits[0, -1, :])
 
     def rank_of_token(self, logits: mx.array, token_id: int) -> int:
         """Zero-indexed rank of `token_id` in `logits` under stable descending
