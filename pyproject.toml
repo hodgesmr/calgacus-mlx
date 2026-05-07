@@ -24,7 +24,6 @@ dependencies = [
     "mlx>=0.31",
     "mlx-lm>=0.31",
     "click>=8.3",
-    "mnemonic>=0.21",
     "tomli-w>=1.2",
 ]
 

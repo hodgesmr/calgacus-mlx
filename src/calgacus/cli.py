@@ -27,7 +27,6 @@ import click
 from . import core
 from .keyfile import KeyFile, load_key, save_key
 from .model import MLXModel
-from .seed import generate_seed
 from .termination import Trailer
 
 
@@ -108,16 +107,11 @@ def _resolve_cover_prompt(
     cover_prompt_file: Path | None,
     keyfile: KeyFile | None,
 ) -> str:
-    """Pick the effective cover prompt seen by the LLM at runtime.
+    """Pick the cover prompt seen by the LLM at runtime.
 
-    If the user passed `--cover-prompt` or `--cover-prompt-file`, that
-    text is used as-is (no seed appending). The user is taking explicit
-    control of the prompt for this call.
-
-    Otherwise, if a keyfile is loaded, use its `effective_cover_prompt()`
-    (which composes `cover_prompt` with `style_seed` if set).
-
-    Raises UsageError if neither path produces a prompt.
+    Order of precedence: --cover-prompt / --cover-prompt-file flag,
+    then the keyfile's `cover_prompt` field. Raises UsageError if
+    neither path produces a prompt.
     """
     cli_text = _resolve_text_input(
         cover_prompt, cover_prompt_file, "cover-prompt",
@@ -126,7 +120,7 @@ def _resolve_cover_prompt(
     if cli_text is not None:
         return cli_text
     if keyfile is not None:
-        return keyfile.effective_cover_prompt()
+        return keyfile.cover_prompt
     raise click.UsageError(
         "No cover prompt provided. Pass --cover-prompt, "
         "--cover-prompt-file, or --key. To create a reusable keyfile, "
@@ -200,10 +194,6 @@ def main() -> None:
     help="Trailer mode (default: graceful).",
 )
 @click.option(
-    "--seed/--no-seed", "seed_flag", default=None,
-    help="Generate a random style seed (default: yes).",
-)
-@click.option(
     "-o", "--output",
     type=click.Path(dir_okay=False, path_type=Path),
     default=Path("calgacus.key.toml"), show_default=True,
@@ -223,7 +213,6 @@ def init(
     secret_prefix: str | None,
     secret_prefix_file: Path | None,
     trailer: str | None,
-    seed_flag: bool | None,
     output: Path,
     force: bool,
     no_interactive: bool,
@@ -304,31 +293,12 @@ def init(
                 "Secret prefix", default="", show_default=False,
             )
 
-    if seed_flag is None:
-        if interactive:
-            click.echo()
-            click.echo(
-                "Add a random style seed? This makes brute-forcing the\n"
-                "key substantially harder without changing the\n"
-                "stegotext's topic."
-            )
-            include_seed = click.confirm("Add seed?", default=True)
-        else:
-            include_seed = True
-    else:
-        include_seed = seed_flag
-
-    seed_words = generate_seed() if include_seed else ""
-    if seed_words and interactive:
-        click.echo(f"  Generated seed: {seed_words}")
-
     trailer_enum = Trailer(trailer) if trailer else Trailer.GRACEFUL
 
     key = KeyFile(
         model=resolved_model,
         cover_prompt=cover_prompt_text,
         secret_prefix=secret_prefix_text,
-        style_seed=seed_words,
         trailer=trailer_enum,
     )
     save_key(key, output)
@@ -378,7 +348,7 @@ def init(
 @click.option(
     "-k", "--key",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=None, help="Load model/k/k'/style_seed/trailer from a TOML keyfile.",
+    default=None, help="Load model/k/k'/trailer from a TOML keyfile.",
 )
 @click.option(
     "-o", "--output",
