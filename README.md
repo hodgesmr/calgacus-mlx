@@ -8,7 +8,7 @@ This is a Python CLI that runs locally on Apple Silicon via [MLX](https://github
 
 ## Demo
 
-Generate a `keyfile.toml` that bundles the model, cover prompt, and protocol settings that sender and receiver share. See [Keyfile format](#keyfile format) for more details.
+Generate a `keyfile.toml` that bundles the model, cover prompt, and protocol settings that sender and receiver share. See [Keyfile format](#keyfile-format) for more details.
 
 ```bash
 uv run calgacus init -o keyfile.toml
