@@ -254,18 +254,6 @@ def init(
                 "Cover prompt required. Pass --cover-prompt or "
                 "--cover-prompt-file."
             )
-        click.echo()
-        click.echo(
-            "Cover prompt (k). The opening sentence(s) of the kind of\n"
-            "text you want as your stegotext. The model continues from\n"
-            "where you stop, so write it as the first words of a passage,\n"
-            "not as an instruction to the model. Stop mid-thought\n"
-            "(on a colon, a comma, or partway through a sentence) for\n"
-            "the sharpest continuation. Examples:\n"
-            "  My take on Kurt Gödel's incompleteness theorems, after rereading the 1931 paper:\n"
-            "  Bella Vita is a small Italian restaurant in our neighborhood, and last Friday I\n"
-            "  Subject: Friday's all-hands. Team,"
-        )
         cover_prompt_text = click.prompt("Cover prompt")
 
     secret_prefix_text = _resolve_text_input(
@@ -276,19 +264,6 @@ def init(
         if not interactive:
             secret_prefix_text = ""
         else:
-            click.echo()
-            click.echo(
-                "Secret prefix (k'). Optional incipit placed before your\n"
-                "secret to give the LLM genre context. A well-matched\n"
-                "prefix lowers the secret-side ranks and improves cover\n"
-                "quality. Especially helpful for non-prose secrets (code,\n"
-                "chess PGN, structured data). Press Enter to skip.\n"
-                "Examples:\n"
-                "  The following is a personal essay:\n"
-                "  The following is a brief covert message:\n"
-                "  The following is a chess game in PGN format:\n"
-                "  The following is Python source code:"
-            )
             secret_prefix_text = click.prompt(
                 "Secret prefix", default="", show_default=False,
             )
@@ -306,9 +281,6 @@ def init(
     click.echo()
     click.echo(f"Wrote {output}.")
     click.echo("Share this file with anyone who needs to decode your messages.")
-    click.echo()
-    click.echo("Try it out:")
-    click.echo(f'  echo "hello world" | calgacus encode --key {output}')
 
 
 # encode ---------------------------------------------------------------
