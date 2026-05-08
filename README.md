@@ -219,7 +219,7 @@ A keyfile is plain TOML with four fields:
 
 ```toml
 model = "mlx-community/Llama-3.2-3B-Instruct-4bit"
-cover_prompt = "I have been wrestling with the grass in my front lawn all summer, and I finally"
+cover_prompt = "I have been struggling with the grass in my front lawn all summer, and"
 secret_prefix = "The following is a fragment of a poem:"
 trailer = "graceful"
 ```
