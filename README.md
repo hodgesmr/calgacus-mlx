@@ -1,16 +1,16 @@
 # calgacus-mlx
 
-Hide a meaningful text inside another plausible text of comparable token length.
+LLM Steganography: Hide a meaningful text inside another plausible text of comparable length.
 
-An MLX implementation of the [Calgacus protocol](https://arxiv.org/abs/2510.20075) (Norelli & Bronstein, 2025) for LLM-based text steganography. Given a secret message, calgacus produces a stegotext that reads like ordinary prose, but encodes the secret losslessly via rank-driven selection from a language model's next-token distribution at each position. A receiver with the same model and the same key recovers the original message exactly.
+MLX implementation of the [Calgacus protocol](https://arxiv.org/abs/2510.20075) (Norelli & Bronstein, 2025) for LLM-based text steganography. Given a secret message, calgacus produces a stegotext that reads like ordinary prose, but encodes the secret losslessly via rank-driven selection from a language model's next-token distribution at each position. A receiver with the same model and the same key recovers the original message exactly.
 
-This is a CLI built around a small Python library. It runs locally on Apple Silicon via [MLX](https://github.com/ml-explore/mlx).
+This is a Python CLI that runs locally on Apple Silicon via [MLX](https://github.com/ml-explore/mlx).
 
 Given a secret text:
 
 > _The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money._
 
-we can use an LLM to encode to a stegotext:
+we can use the LLM to encode to a stegotext:
 
 > _The leftover sauce from the previous evening still somehow magically made the spaghetti from that night taste fresh, like its own feeder.Then, I had a conversation with a friend who had recently moved to a new city._
 
@@ -18,7 +18,11 @@ and then decode it back.
 
 ## Demo
 
-Given the following `keyfile.toml`:
+Generate a `keyfile.toml` that bundles the model, cover prompt, and protocol settings that sender and receiver share. See [[Keyfile format](#keyfile format)] for more details.
+
+```bash
+uv run calgacus init -o keyfile.toml
+```
 
 ```toml
 model = "mlx-community/Llama-3.2-3B-Instruct-4bit"
@@ -27,11 +31,10 @@ secret_prefix = "The following is an important covert message. Please read it ca
 trailer = "graceful"
 ```
 
-and the following `secret.txt`:
+With the following `secret.txt`:
 
-```txt
-The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
-```
+> The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
+
 
 encode to `stegotext.txt`:
 
@@ -43,11 +46,11 @@ uv run calgacus encode \
 cat stegotext.txt
 ```
 
-```txt
-The leftover sauce from the previous evening still somehow magically made the spaghetti from that night taste fresh, like its own feeder.Then, I had a conversation with a friend who had recently moved to a new city.
-```
+The `stegotext.txt` it produces: 
 
-and then anyone with the same `keyfile.toml` can recover it:
+> The leftover sauce from the previous evening still somehow magically made the spaghetti from that night taste fresh, like its own feeder.Then, I had a conversation with a friend who had recently moved to a new city.
+
+Anyone with the same `keyfile.toml` can recover it:
 
 ```bash
 uv run calgacus decode \
@@ -55,13 +58,11 @@ uv run calgacus decode \
     -s stegotext.txt
 ```
 
-```txt
-The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
-```
+> The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
 
-The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as a casual aside about a recent meal and an old friend, and gives no surface indication that it carries a hidden payload. There may still be cover-quality artifacts at positions where the secret-side ranks are high. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
+The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as a casual aside about a recent meal and an old friend, and gives no surface indication that it carries a hidden payload. There may be cover-quality artifacts in the stegotext at positions where the secret-side ranks are high. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
 
-Hide a shell command:
+This enables other sneaky things. We can hide a shell command, `curl -sIL http://example.com`:
 
 ```bash
 echo -n "curl -sIL http://example.com" \
@@ -70,9 +71,8 @@ echo -n "curl -sIL http://example.com" \
       --quiet
 ```
 
-```
-Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills.
-```
+Gives the stegotext: 
+> Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills.
 
 Decode and run in one shot:
 
@@ -86,6 +86,8 @@ $(
 )
 ```
 
+Our sentence about a video came career excuted our `curl` command:
+
 ```
 HTTP/1.1 200 OK
 Date: Fri, 08 May 2026 03:41:36 GMT
@@ -97,12 +99,6 @@ Allow: GET, HEAD
 Accept-Ranges: bytes
 Age: 3997
 cf-cache-status: HIT
-```
-
-To generate a keyfile that bundles the model, cover prompt, and protocol settings that sender and receiver share:
-
-```bash
-$ uv run calgacus init -o keyfile.toml
 ```
 
 ## How it works
