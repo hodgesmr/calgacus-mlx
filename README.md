@@ -6,19 +6,9 @@ MLX implementation of the [Calgacus protocol](https://arxiv.org/abs/2510.20075) 
 
 This is a Python CLI that runs locally on Apple Silicon via [MLX](https://github.com/ml-explore/mlx).
 
-Given a secret text:
-
-> _The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money._
-
-we can use the LLM to encode to a stegotext:
-
-> _The leftover sauce from the previous evening still somehow magically made the spaghetti from that night taste fresh, like its own feeder.Then, I had a conversation with a friend who had recently moved to a new city._
-
-and then decode it back.
-
 ## Demo
 
-Generate a `keyfile.toml` that bundles the model, cover prompt, and protocol settings that sender and receiver share. See [[Keyfile format](#keyfile format)] for more details.
+Generate a `keyfile.toml` that bundles the model, cover prompt, and protocol settings that sender and receiver share. See [Keyfile format](#keyfile format) for more details.
 
 ```bash
 uv run calgacus init -o keyfile.toml
