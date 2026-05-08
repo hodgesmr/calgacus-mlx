@@ -1,54 +1,85 @@
 # calgacus-mlx
 
-> Hide a meaningful text inside another coherent, plausible text of comparable token length.
+Hide a meaningful text inside another plausible text of comparable token length.
 
-An MLX implementation of the [Calgacus protocol](https://arxiv.org/abs/2510.20075) (Norelli & Bronstein, 2025) for LLM-based text steganography. Given a secret message, calgacus produces a stegotext that reads like ordinary prose on the surface, but encodes the secret losslessly through the rank choices a language model makes at each token position. A receiver with the same model and the same key recovers the original message exactly.
+An MLX implementation of the [Calgacus protocol](https://arxiv.org/abs/2510.20075) (Norelli & Bronstein, 2025) for LLM-based text steganography. Given a secret message, calgacus produces a stegotext that reads like ordinary prose, but encodes the secret losslessly via rank-driven selection from a language model's next-token distribution at each position. A receiver with the same model and the same key recovers the original message exactly.
 
 This is a CLI built around a small Python library. It runs locally on Apple Silicon via [MLX](https://github.com/ml-explore/mlx).
 
+Given a secret text:
+
+> _The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money._
+
+we can use an LLM to encode to a stegotext:
+
+> _The leftover sauce from the previous evening still somehow magically made the spaghetti from that night taste fresh, like its own feeder.Then, I had a conversation with a friend who had recently moved to a new city._
+
+and then decode it back.
+
 ## Demo
 
-```bash
-calgacus init -o demo.key.toml --no-interactive \
-    --cover-prompt "My take on Kurt Gödel's incompleteness theorems, after rereading the original 1931 paper:" \
-    --secret-prefix "The following is a brief covert message:" \
-    --no-seed
-```
-
-The keyfile (`demo.key.toml`) bundles the model, cover prompt, and protocol settings that sender and receiver share:
+Given the following `keyfile.toml`:
 
 ```toml
 model = "mlx-community/Llama-3.2-3B-Instruct-4bit"
-cover_prompt = "My take on Kurt Gödel's incompleteness theorems, after rereading the original 1931 paper:"
-secret_prefix = "The following is a brief covert message:"
-style_seed = ""
+cover_prompt = "The spaghetti was delicious and the breadsticks were a fantastic side dish, but the salad was stale."
+secret_prefix = "The following is an important covert message. Please read it carefully."
 trailer = "graceful"
 ```
 
-Encode a secret:
+and the following `secret.txt`:
 
-```bash
-$ cat demo_secret.txt
-We need to talk on Tuesday. The plan changed: the meeting is now at the lighthouse, midnight. Bring the manuscript and tell no one.
-
-$ calgacus encode -k demo.key.toml -s demo_secret.txt -o demo_stego.txt
-
-$ cat demo_stego.txt
-We all know it is an easy exercise reading (I don't know if it's extra hard writing first) of course calculus, physics & engineering, compartmentposites, etc. to prove that the universe is finite.  But Gödel's theorems show that it is impossible to prove that the universe is finite.
+```txt
+The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
 ```
 
-Recover it:
+encode to `stegotext.txt`:
 
 ```bash
-$ calgacus decode -k demo.key.toml -s demo_stego.txt
-We need to talk on Tuesday. The plan changed: the meeting is now at the lighthouse, midnight. Bring the manuscript and tell no one.
+$ uv run calgacus encode -k keyfile.toml -s secret.txt -o stegotext.txt
 ```
 
-The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as the opening of an essay on Gödel and gives no surface indication that it carries a hidden payload. (There are still cover-quality artifacts where the secret-side ranks are high, like `compartmentposites` and the wrong-way claim about proving the universe is finite. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.)
+```bash
+$ cat stegotext.txt
+```
+
+```txt
+The leftover sauce from the previous evening still somehow magically made the spaghetti from that night taste fresh, like its own feeder.Then, I had a conversation with a friend who had recently moved to a new city.
+```
+
+and then anyone with the same `keyfile.toml` can recover it:
+
+```bash
+$ uv run calgacus decode -k keyfile.toml -s stegotext.txt
+```
+
+```txt
+The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
+```
+
+The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as a casual aside about a recent meal and an old friend, and gives no surface indication that it carries a hidden payload. There are still cover-quality artifacts at positions where the secret-side ranks are high: `feeder` as a stand-in for a more natural noun, and the missing space in `feeder.Then`. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
+
+To generate a keyfile that bundles the model, cover prompt, and protocol settings that sender and receiver share:
+
+```bash
+$ uv run calgacus init -o keyfile.toml
+
+Welcome. Let's create a Calgacus keyfile. The keyfile bundles
+the model, cover prompt, and other settings that sender and
+receiver must share. Both parties need an identical copy of
+this file.
+
+Model [mlx-community/Llama-3.2-3B-Instruct-4bit]:
+Cover prompt: The spaghetti was delicious and the breadsticks were a fantastic side dish, but the salad was stale.
+Secret prefix: The following is an important covert message. Please read it carefully.
+
+Wrote keyfile.toml.
+Share this file with anyone who needs to decode your messages.
+```
 
 ## How it works
 
-The core idea, in three sentences. A language model, given a context, defines a probability distribution over the next token; the same context gives the same distribution. Calgacus uses that distribution as a shared random oracle: the encoder picks a cover token by its rank in the cover-side distribution, where the rank value is the rank of the next secret token in a different (secret-side) distribution. The decoder runs the same two distributions and reverses the mapping.
+A language model, given a context, defines a probability distribution over the next token; the same context gives the same distribution. Calgacus uses that distribution as a shared random oracle: the encoder picks a cover token by its rank in the cover-side distribution, where the rank value is the rank of the next secret token in a different (secret-side) distribution. The decoder runs the same two distributions and reverses the mapping.
 
 Concretely:
 
@@ -56,27 +87,19 @@ Concretely:
 - **Cover side**. The encoder generates one cover token per rank `r_i`, picking the rank-`r_i`-th most likely token under the cover prompt `k` (and the cover-so-far). These cover tokens, detokenized, are the stegotext.
 - **Decode**. The decoder tokenizes `k + stegotext`, walks the cover tokens, looks up each one's rank under the cover-side distribution to recover `r_i`, then replays those ranks against the secret-side distribution. Stop when EOS is hit.
 
-The stegotext's length tracks the secret's length plus a small fixed trailer. Both sides need the same model, the same cover prompt `k`, the same secret prefix `k'`, the same trailer mode, and (if used) the same style seed. The keyfile bundles all of these.
+Two small mechanisms support those three steps. The **trailer** (default `.\n\n`) is a fixed sequence appended to the secret stream before EOS so the model rates EOS at low rank under the secret-side context, which keeps the cover-side pick at the EOS position from being a deep-tail glyph. The **natural tail** is a few greedy cover tokens appended after the rank-driven payload so the visible stegotext lands on a sentence boundary; the decoder discards anything past the recovered EOS, so the tail is purely cosmetic.
+
+The stegotext's token count is roughly the secret's, plus a few tokens for the trailer and a short optional natural tail; the total is typically 1x to 1.5x of the secret's token count in practice. Both sides need the same model, the same cover prompt `k`, the same secret prefix `k'`, and the same trailer. The keyfile bundles all of these.
 
 There are three engineering wrinkles the paper alludes to but doesn't fully address. They are easy to get wrong, and getting them wrong silently breaks round-trip:
 
 1. **BPE tokenization stability.** Byte-pair-encoding tokenizers can re-merge tokens depending on their neighbors. If the encoder picks token A then token B, but `detokenize([A, B])` re-tokenizes back to a single token AB, the decoder sees a different token sequence than the encoder wrote. Calgacus filters cover-side picks to "canonical-stable" tokens whose addition to the prefix does not disturb earlier merges. We also fast-path tokens that begin with whitespace, which the BPE essentially never re-merges across.
-2. **Numerical determinism.** With bf16 weights, the order of additions in a forward pass affects the last bit or two of the logits, which is enough to flip the rank of two close-together tokens. Bulk-pass and KV-cache forward passes don't always produce identical logits. Calgacus uses the KV cache uniformly on both sides so the rank queries get the same logit values during encode and decode.
-3. **Whitespace portability.** Stegotext travels through chat clients and email forwarders that mangle leading whitespace. Calgacus restricts the first cover token to a leading-space-aware token, lstrips one space before emitting the visible stegotext, and prepends one space on the decoder side before tokenizing. The visible text is whitespace-stable; the protocol stays in sync.
+2. **Numerical determinism.** With bf16 weights, the order of additions in a forward pass affects the last bit or two of the logits, which is enough to flip the rank of two close-together tokens. Bulk-pass and KV-cache forward passes don't always produce identical logits. Calgacus uses the KV cache uniformly on both sides so the rank queries get the same logit values during encode and decode. Calgacus also casts the final logits to float32 at the wrapper boundary, so downstream rank arithmetic in numpy works regardless of whether the model emits float32 or bfloat16 (some Qwen3 and Gemma variants emit bf16, which numpy can't read directly through the buffer protocol).
+3. **Whitespace portability.** Stegotext travels through chat clients and email forwarders that mangle leading whitespace. Calgacus restricts the first cover token to a regular leading-space token (specifically space-prefixed, *not* newline- or tab-prefixed, so the encoder's `lstrip(' ')` stays symmetric with the decoder's space-prepend), lstrips one space before emitting the visible stegotext, and prepends one space on the decoder side before tokenizing. The visible text is whitespace-stable; the protocol stays in sync.
 
 ## Install
 
-Requires Python 3.11+ and Apple Silicon. MLX is Apple-specific, so this implementation is too. The protocol itself is portable; a CUDA or MPS port would be straightforward.
-
-```bash
-uv pip install calgacus-mlx
-# or
-pip install calgacus-mlx
-```
-
-The first encode or decode call downloads the default model (`mlx-community/Llama-3.2-3B-Instruct-4bit`, ~2GB) into your HuggingFace cache. Subsequent runs load from disk in a few seconds.
-
-To run from source:
+Requires Python 3.11+, [uv](https://docs.astral.sh/uv/), and Apple Silicon. MLX is Apple-specific, so this implementation is too. The protocol itself is portable; a CUDA or MPS port would be straightforward.
 
 ```bash
 git clone https://github.com/hodgesmr/calgacus-mlx
@@ -85,6 +108,8 @@ uv sync
 uv run calgacus --help
 ```
 
+The first encode or decode call downloads the default model (`mlx-community/Llama-3.2-3B-Instruct-4bit`, ~2GB) into your HuggingFace cache. Subsequent runs load from disk in a few seconds.
+
 ## Usage
 
 ### `calgacus init`
@@ -92,9 +117,9 @@ uv run calgacus --help
 Scaffold a keyfile interactively or from flags. The keyfile is plain TOML and is what sender and receiver must share.
 
 ```bash
-calgacus init                                    # interactive
-calgacus init -o my.key.toml --no-interactive \
-    --cover-prompt "I have been wrestling with my front lawn all summer, and I finally" \
+uv run calgacus init   # interactive
+uv run calgacus init -o keyfile.toml --no-interactive \
+    --cover-prompt "I have been wrestling with the grass in my front lawn all summer, and I finally" \
     --secret-prefix "The following is a fragment of a poem:" \
     --trailer graceful
 ```
@@ -104,29 +129,32 @@ Both parties need an identical copy of the keyfile. Treat it like a shared secre
 ### `calgacus encode`
 
 ```bash
-echo "hello world" | calgacus encode -k my.key.toml
-calgacus encode "hello world" -k my.key.toml
-calgacus encode -k my.key.toml -s secret.txt -o stego.txt
+echo "hello world" | uv run calgacus encode -k keyfile.toml
+uv run calgacus encode "hello world" -k keyfile.toml
+uv run calgacus encode -k keyfile.toml -s secret.txt -o stego.txt
 ```
 
 Reads the secret from a positional argument, `--secret-file` (with `-` for stdin), or stdin (default). Writes stegotext to stdout or `--output`.
 
+Use `--tail-max-tokens N` to bound the natural tail; default is 32. Set to 0 to skip the tail entirely and end the stegotext at the rank-driven payload's last cover token (which may not land on a sentence boundary).
+
 ### `calgacus decode`
 
 ```bash
-calgacus decode -k my.key.toml -s stego.txt
-cat stego.txt | calgacus decode -k my.key.toml
+uv run calgacus decode -k keyfile.toml -s stego.txt
+cat stego.txt | uv run calgacus decode -k keyfile.toml
 ```
 
 Reads stegotext, recovers the secret. The decoder ignores any tail text past EOS, so a stegotext can carry a short natural-sounding ending without affecting recovery.
 
 ### Keyfile format
 
+A keyfile is plain TOML with four fields:
+
 ```toml
 model = "mlx-community/Llama-3.2-3B-Instruct-4bit"
-cover_prompt = "I have been wrestling with my front lawn all summer, and I finally"
-secret_prefix = "The following is a personal essay:"
-style_seed = "vault sustain orbit modify lounge fragile"
+cover_prompt = "I have been wrestling with the grass in my front lawn all summer, and I finally"
+secret_prefix = "The following is a fragment of a poem:"
 trailer = "graceful"
 ```
 
@@ -135,30 +163,29 @@ trailer = "graceful"
 | `model` | HuggingFace model ID. Both ends must use the same one (and the same quantization). |
 | `cover_prompt` | The opening text of the cover passage. Treat it as the first sentence(s) the model continues into a stegotext, not an instruction. See [Cover prompt](#cover-prompt) for why. |
 | `secret_prefix` | Optional incipit prepended to the secret. A genre-matched prefix lowers the secret-side ranks and improves cover quality, especially for non-prose secrets like code, chess PGN, or structured data. |
-| `style_seed` | Optional BIP39 word list appended to the cover prompt. Adds entropy to the keyfile without changing the cover topic. Without it, anyone who guesses the cover prompt can decode. |
 | `trailer` | `graceful` (default) appends `.\n\n` before EOS so the protocol's stop sentinel sits at a low rank in the cover distribution. `eos-only` skips the trailer; cover quality at the EOS position is slightly worse. |
 
 Flags on `encode` and `decode` (`--cover-prompt`, `--secret-prefix`, `--model`, `--trailer`) override individual keyfile fields, so the same keyfile can be used as a base with per-call adjustments.
 
 ## Tuning the keyfile
 
-The cover prompt, secret prefix, and style seed all directly affect stegotext quality. A weak prompt produces a stegotext that reads like nonsense even though round-trip is exact. Spend time on these.
+The cover prompt, secret prefix, and model choice all directly affect stegotext quality. A weak prompt produces a stegotext that reads like nonsense even though round-trip is exact. A small model produces broad distributions and more deep-tail artifacts. Spend time on these.
 
 ### Cover prompt
 
 The cover prompt is the most consequential setting, and the thing to internalize about it is that it is an **incipit, not an instruction**. Calgacus does not give the LLM a question and read its answer; it gives the LLM the *opening of a passage* and the LLM continues that passage. Write the first sentence (or two) of the kind of text you want as your stegotext, and stop where you want the model to take over.
 
-| works | does not |
+| effective | ineffective |
 | --- | --- |
 | `My take on Kurt Gödel's incompleteness theorems, after rereading the 1931 paper:` | `Write a thoughtful overview of Gödel's incompleteness theorems.` |
 | `Bella Vita is a small Italian restaurant in our neighborhood, and last Friday I` | `Compose a glowing review of an Italian restaurant called Bella Vita.` |
-| `Subject: Friday's all-hands. Team,` | `Write a brief work memo announcing a meeting.` |
+| `The spaghetti was delicious and the breadsticks were a fantastic side dish, but the salad was stale.` | `The spaghetti was good. The breadsticks were nice. The salad was stale.` |
 
 Three rules of thumb for incipits:
 
 1. **Set the genre up front.** Mention the kind of text it is (review, essay, memo, recipe). The model's continuation distribution is heavily shaped by what it thinks the document is.
 2. **Pin down topic, register, and audience.** Specific incipits keep the natural distribution narrow, which means even moderate-rank cover picks stay readable. Vague incipits collapse into the deep tail and produce off-topic glyphs.
-3. **Stop mid-thought.** Ending the incipit on a colon, a comma, or mid-sentence pushes the model into a sharp, well-defined continuation lane. Ending on a period gives the model freedom to start a new thought, and the new thought may not match the topic.
+3. **Continue the thought.** The model picks up where you stop. Mid-sentence endings (colon, comma, or partway through) give the sharpest continuation lane, but a single complete thought ending in a period also works well; the model just keeps going in the same register. What hurts is multiple short period-terminated sentences in a row; that primes the model for a paragraph break, which often shows up in the cover as a stray newline mid-stegotext.
 
 Why instructions don't work: instruction-tuned LLMs (like Llama 3.2 Instruct) expect chat-formatted input (`<|start_header_id|>user<|end_header_id|>...`) when given a question. Calgacus feeds the prompt as raw text, so the model treats it as a passage to continue. Instructions in raw-text mode confuse the model's next-token distribution; incipits do not.
 
@@ -176,15 +203,27 @@ secret_prefix = "The following is a brief covert message:"
 secret_prefix = "The following is a fragment of a poem:"
 ```
 
-### Style seed
+### Model
 
-Without a style seed, the only secret in the keyfile is the cover prompt. An adversary who guesses the prompt can decode. The style seed adds ~66 bits of entropy by appending six BIP39 words to the prompt; the LLM sees those words as part of its conditioning, but the cover topic and tone are dominated by the prompt, so the visible stegotext stays coherent. Generated automatically by `calgacus init` unless `--no-seed` is passed.
+The default is `mlx-community/Llama-3.2-3B-Instruct-4bit`: small (~2 GB), fast on Apple Silicon, good enough for short secrets. It's also the cheapest model in the family, which means its next-token distributions are broader at typical positions; rank-`r_i`-th cover picks at moderate `r_i` fall into the tail more often than a larger model's would, and those tail picks are what produce the visible artifacts in the stegotext.
+
+A larger model trades speed for cover quality. Roughly: a 7-8B model is ~3x slower per encoded token than the 3B default, but its sharper distributions push moderate-rank picks toward natural tokens and reduce the cascade effect along the cover.
+
+Tested alternatives:
+
+```toml
+model = "mlx-community/Llama-3.1-8B-Instruct-4bit"      # same family, larger
+model = "mlx-community/Qwen2.5-7B-Instruct-4bit"        # different family
+model = "mlx-community/Mistral-7B-Instruct-v0.3-4bit"   # different family
+```
+
+Both sides must use the **same model and the same quantization**. Mixing a 4-bit and an 8-bit copy of the same base model will not round-trip; the logits diverge enough to flip ranks.
 
 ## Limitations
 
 - **Apple Silicon only.** MLX runs on Apple GPUs. A CUDA or MPS port is straightforward but not done here.
 - **Model-locked.** Both ends need the exact same model and quantization. Mixing a 4-bit and an 8-bit Llama 3.2 3B will not round-trip; the logits diverge.
-- **Cover prose has artifacts.** At positions where the secret-side rank is high, the cover-side pick is a low-probability token under the cover distribution. These produce occasional malformed words or odd phrasings. Better cover prose comes from a larger model or a more permissive cover prompt; the trade-off is speed.
+- **Cover prose has artifacts, and they cluster toward the end.** At positions where the secret-side rank is high, the cover-side pick is a low-probability token under the cover distribution, producing the occasional malformed word or odd phrasing. The effect compounds: each off-distribution pick widens the cover model's next-position distribution, making subsequent picks more likely to also fall into the tail, so artifacts cluster toward the end of the stegotext rather than spreading uniformly. Better cover prose comes from a larger model or a more specific cover prompt; the trade-off is speed.
 - **Stegotext length is comparable, not exact.** Because of BPE stability filtering and the trailer, the stegotext is typically 1x to 1.5x the secret's token count, not a strict 1:1. The paper's title says "of the same length"; this implementation produces "of comparable length."
 - **Not cryptographic.** The security claim is steganographic: a stegotext should be hard to distinguish from natural samples drawn from the cover distribution. There is no integrity guarantee, no forward secrecy, and no protection against active adversaries who know the keyfile is in use. If you need confidentiality against a serious adversary, use real cryptography (age, PGP, Signal). Stack steganography on top of cryptography only when you need plausible deniability of the message's existence.
 - **Tail text is decorative.** The encoder appends a short natural-sampled tail past EOS for a graceful ending; the decoder discards anything after EOS. The tail does not encode anything.
