@@ -128,7 +128,7 @@ Stegotext: `"Wood shelves creak"`.
 
 **Decoding** runs the inverse: rank the cover tokens under `k` to recover `[2, 3, 1]`, then replay those ranks under `k'` to regenerate `"Plant tomatoes now"`. Sender and receiver never exchange the secret directly; they share `k`, `k'`, the model, and the visible `"Wood shelves creak"`. The secret travels through the rank values.
 
-Two small mechanisms support those three steps. The encoder appends a fixed **trailer** (default `.\n\n`) to the secret stream before EOS so the model rates EOS at low rank under the secret-side context, which keeps the cover-side pick at the EOS position from being a deep-tail glyph. The encoder also appends a few greedy cover tokens after the rank-driven payload, called the **natural tail**, so the visible stegotext lands on a sentence boundary; the decoder discards anything past the recovered EOS, so the tail is purely cosmetic.
+Two small mechanisms support those three steps. The encoder appends a fixed **trailer** (default `.\n\n`) to the secret stream before EOS so the model rates EOS at low rank under the secret-side context. This keeps the cover-side pick at the EOS position from being a deep-tail glyph. The encoder also appends a few greedy cover tokens after the rank-driven payload, called the **natural tail**, so the visible stegotext lands on a sentence boundary; the decoder discards anything past the recovered EOS, so the tail is purely cosmetic.
 
 The encoder also walks the trailer and EOS at the end of the secret-side stream. Using `.` as a one-token trailer:
 
