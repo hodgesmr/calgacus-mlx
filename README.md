@@ -180,8 +180,13 @@ The first encode or decode call downloads the default model (`mlx-community/Llam
 
 Scaffold a keyfile interactively or from flags. The keyfile is plain TOML and is what sender and receiver must share.
 
+Interactive:
 ```bash
-uv run calgacus init   # interactive
+uv run calgacus init
+```
+
+Or with passed arguments:
+```bash
 uv run calgacus init \
     -o keyfile.toml \
     --no-interactive \
@@ -190,28 +195,37 @@ uv run calgacus init \
     --trailer graceful
 ```
 
-Both parties need an identical copy of the keyfile. Treat it like a shared secret: anyone with the keyfile can decode anything you encode under it.
+Both parties need an identical copy of the keyfile. Treat it like a shared secret.
 
 ### `calgacus encode`
 
+Reads the secret from a positional argument, `--secret-file` (with `-` for stdin), or stdin (default). Writes stegotext to stdout or `--output`.
+
 ```bash
-echo "hello world" | uv run calgacus encode -k keyfile.toml
-uv run calgacus encode "hello world" -k keyfile.toml
 uv run calgacus encode -k keyfile.toml -s secret.txt -o stego.txt
 ```
 
-Reads the secret from a positional argument, `--secret-file` (with `-` for stdin), or stdin (default). Writes stegotext to stdout or `--output`.
+```bash
+uv run calgacus encode "hello world" -k keyfile.toml
+```
 
-Use `--tail-max-tokens N` to bound the natural tail; default is 32. Set to 0 to skip the tail entirely and end the stegotext at the rank-driven payload's last cover token (which may not land on a sentence boundary).
+```bash
+echo "hello world" | uv run calgacus encode -k keyfile.toml
+```
+
+You can optionally pass `--tail-max-tokens N` to bound the natural tail; default is 32. Set to 0 to skip the tail entirely and end the stegotext at the rank-driven payload's last cover token (which may not land on a sentence boundary).
 
 ### `calgacus decode`
 
+Reads stegotext, recovers the secret.
+
 ```bash
 uv run calgacus decode -k keyfile.toml -s stego.txt
-cat stego.txt | uv run calgacus decode -k keyfile.toml
 ```
 
-Reads stegotext, recovers the secret. The decoder ignores any tail text past EOS, so a stegotext can carry a short natural-sounding ending without affecting recovery.
+```bash
+cat stego.txt | uv run calgacus decode -k keyfile.toml
+```
 
 ### Keyfile format
 
