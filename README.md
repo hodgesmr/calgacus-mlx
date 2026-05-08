@@ -33,7 +33,6 @@ uv run calgacus encode \
     -k keyfile.toml \
     -s secret.txt \
     -o stegotext.txt
-cat stegotext.txt
 ```
 
 The `stegotext.txt` it produces: 
@@ -50,7 +49,7 @@ uv run calgacus decode \
 
 > The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
 
-The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as a casual aside about a recent meal and an old friend, and gives no surface indication that it carries a hidden payload. There may be cover-quality artifacts in the stegotext at positions where the secret-side ranks are high. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
+The recovered text matches the original byte-for-byte. The stegotext gives no surface indication that it carries a hidden payload. There may be cover-quality artifacts in the stegotext at positions where the secret-side ranks are high. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
 
 This enables other sneaky things. We can hide a shell command, `curl -sIL http://example.com`:
 
@@ -76,7 +75,7 @@ $(
 )
 ```
 
-Our sentence about a video came career excuted our `curl` command:
+The `curl` command recovered and run:
 
 ```
 HTTP/1.1 200 OK
@@ -98,18 +97,51 @@ A language model, given a context, defines a probability distribution over the n
 Concretely:
 
 - **Secret side**. The encoder tokenizes `k' + secret + trailer + EOS` (where `k'` is an optional secret prefix) and walks it position by position. At position `i`, it queries the model for the distribution under the prefix and records `r_i`, the rank of the actual secret token in that distribution.
-- **Cover side**. The encoder generates one cover token per rank `r_i`, picking the rank-`r_i`-th most likely token under the cover prompt `k` (and the cover-so-far). These cover tokens, detokenized, are the stegotext.
+- **Cover side**. The encoder generates one cover token per rank `r_i`, picking the rank-`r_i`-th most likely token under the cover prompt `k` (and the cover-so-far), then extends the cover with a short greedy natural tail. Detokenized, the full cover-token sequence is the stegotext.
 - **Decode**. The decoder tokenizes `k + stegotext`, walks the cover tokens, looks up each one's rank under the cover-side distribution to recover `r_i`, then replays those ranks against the secret-side distribution. Stop when EOS is hit.
 
-Two small mechanisms support those three steps. The **trailer** (default `.\n\n`) is a fixed sequence appended to the secret stream before EOS so the model rates EOS at low rank under the secret-side context, which keeps the cover-side pick at the EOS position from being a deep-tail glyph. The **natural tail** is a few greedy cover tokens appended after the rank-driven payload so the visible stegotext lands on a sentence boundary; the decoder discards anything past the recovered EOS, so the tail is purely cosmetic.
+For intuition, a small worked example with a 3-token vocabulary (real models have ~128k tokens; the mechanic is the same):
 
-The stegotext's token count is roughly the secret's, plus a few tokens for the trailer and a short optional natural tail; the total is typically 1x to 1.5x of the secret's token count in practice. Both sides need the same model, the same cover prompt `k`, the same secret prefix `k'`, and the same trailer. The keyfile bundles all of these.
+- `k'` = `"The following is a garden reminder:"`
+- secret = `"Plant tomatoes now"`
+- `k` = `"Describe an old library:"`
 
-There are three engineering wrinkles the paper alludes to but doesn't fully address. They are easy to get wrong, and getting them wrong silently breaks round-trip:
+**Secret to ranks.** Walk the secret under `k'`. At each position, the model produces a ranked list of plausible next tokens; record the actual secret token's rank.
 
-1. **BPE tokenization stability.** Byte-pair-encoding tokenizers can re-merge tokens depending on their neighbors. If the encoder picks token A then token B, but `detokenize([A, B])` re-tokenizes back to a single token AB, the decoder sees a different token sequence than the encoder wrote. Calgacus filters cover-side picks to "canonical-stable" tokens whose addition to the prefix does not disturb earlier merges. We also fast-path tokens that begin with whitespace, which the BPE essentially never re-merges across.
-2. **Numerical determinism.** With bf16 weights, the order of additions in a forward pass affects the last bit or two of the logits, which is enough to flip the rank of two close-together tokens. Bulk-pass and KV-cache forward passes don't always produce identical logits. Calgacus uses the KV cache uniformly on both sides so the rank queries get the same logit values during encode and decode. Calgacus also casts the final logits to float32 at the wrapper boundary, so downstream rank arithmetic in numpy works regardless of whether the model emits float32 or bfloat16 (some Qwen3 and Gemma variants emit bf16, which numpy can't read directly through the buffer protocol).
-3. **Whitespace portability.** Stegotext travels through chat clients and email forwarders that mangle leading whitespace. Calgacus restricts the first cover token to a regular leading-space token (specifically space-prefixed, *not* newline- or tab-prefixed, so the encoder's `lstrip(' ')` stays symmetric with the decoder's space-prepend), lstrips one space before emitting the visible stegotext, and prepends one space on the decoder side before tokenizing. The visible text is whitespace-stable; the protocol stays in sync.
+```
+pos 0   context: k'                          top-3: Water, Plant, Trim          "Plant"    -> rank 2
+pos 1   context: k' + "Plant"                top-3: the, your, tomatoes         "tomatoes" -> rank 3
+pos 2   context: k' + "Plant tomatoes"       top-3: now, today, soon            "now"      -> rank 1
+```
+
+Rank sequence: `[2, 3, 1]`.
+
+**Ranks to cover.** Walk the cover under `k`. At each position, pick the rank-`r_i`-th token from the model's ranked list.
+
+```
+pos 0   context: k                           top-3: Dust, Wood, Books           rank 2 -> "Wood"
+pos 1   context: k + "Wood"                  top-3: floors, panels, shelves     rank 3 -> "shelves"
+pos 2   context: k + "Wood shelves"          top-3: creak, hold, line           rank 1 -> "creak"
+```
+
+Stegotext: `"Wood shelves creak"`.
+
+**Decoding** runs the inverse: rank the cover tokens under `k` to recover `[2, 3, 1]`, then replay those ranks under `k'` to regenerate `"Plant tomatoes now"`. Sender and receiver never exchange the secret directly; they share `k`, `k'`, the model, and the visible `"Wood shelves creak"`. The secret travels through the rank values.
+
+Two small mechanisms support those three steps. The encoder appends a fixed **trailer** (default `.\n\n`) to the secret stream before EOS so the model rates EOS at low rank under the secret-side context, which keeps the cover-side pick at the EOS position from being a deep-tail glyph. The encoder also appends a few greedy cover tokens after the rank-driven payload, called the **natural tail**, so the visible stegotext lands on a sentence boundary; the decoder discards anything past the recovered EOS, so the tail is purely cosmetic.
+
+The encoder also walks the trailer and EOS at the end of the secret-side stream. Using `.` as a one-token trailer:
+
+```
+pos 3   context: k' + "Plant tomatoes now"     top-3: ., !, ?                 "."  -> rank 1
+pos 4   context: k' + "Plant tomatoes now."    top-3: EOS, And, Then          EOS  -> rank 1
+```
+
+The trailer's job is exactly that rank-1 EOS at position 4. Without the period before EOS, the model wouldn't yet expect a stop (it'd want "more text"), so EOS would sit deeper in the menu, and the cover-side pick at that position would have to reach into the tail of the cover distribution: a deep-tail glyph instead of a clean rank-1 cover token. EOS itself is never appended to the visible cover (it'd be stripped on detokenize and break the round-trip), so it acts only as a stop signal.
+
+After the rank-driven payload, the natural tail extends the cover with greedy continuations until the visible text lands on a sentence terminator (`.`, `!`, `?`) or the model's top-1 prediction is EOS. The decoder discards everything past the recovered EOS, so the tail is purely cosmetic; it just gives the visible stegotext a clean ending.
+
+The stegotext's token count is roughly the secret's, plus a few tokens for the trailer and a short optional natural tail. Both sides need the same model, the same cover prompt `k`, the same secret prefix `k'`, and the same trailer. The keyfile bundles all of these.
 
 ## Install
 
