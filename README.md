@@ -172,7 +172,7 @@ uv sync
 uv run calgacus --help
 ```
 
-The first encode or decode call downloads the default model (`mlx-community/Llama-3.2-3B-Instruct-4bit`, ~2GB) into your HuggingFace cache. Subsequent runs load from disk in a few seconds.
+The first encode or decode call downloads the default model (`mlx-community/Llama-3.2-3B-Instruct-4bit`) into your HuggingFace cache.
 
 ## Usage
 
@@ -245,7 +245,7 @@ trailer = "graceful"
 | `secret_prefix` | Optional incipit prepended to the secret. A genre-matched prefix lowers the secret-side ranks and improves cover quality, especially for non-prose secrets like code, chess PGN, or structured data. |
 | `trailer` | `graceful` (default) appends `.\n\n` before EOS so the protocol's stop sentinel sits at a low rank in the cover distribution. `eos-only` skips the trailer; cover quality at the EOS position is slightly worse. |
 
-Flags on `encode` and `decode` (`--cover-prompt`, `--secret-prefix`, `--model`, `--trailer`) override individual keyfile fields, so the same keyfile can be used as a base with per-call adjustments.
+Flags on `encode` and `decode` override individual keyfile fields, so the same keyfile can be used as a base with per-call adjustments.
 
 ## Tuning the keyfile
 
@@ -297,7 +297,7 @@ model = "mlx-community/Qwen2.5-7B-Instruct-4bit"        # different family
 model = "mlx-community/Mistral-7B-Instruct-v0.3-4bit"   # different family
 ```
 
-Both sides must use the **same model and the same quantization**. Mixing a 4-bit and an 8-bit copy of the same base model will not round-trip; the logits diverge enough to flip ranks.
+Both sides must use the **same model and the same quantization**.
 
 ## Citation
 
