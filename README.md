@@ -137,9 +137,27 @@ The encoder also walks the trailer and EOS at the end of the secret-side stream.
 | 3 | `k' + "Plant tomatoes now"` | `.`, `!`, `?` | `"."` | 1 |
 | 4 | `k' + "Plant tomatoes now."` | EOS, And, Then | EOS | 1 |
 
-The trailer's job is exactly that rank-1 EOS at position 4. Without the period before EOS, the model wouldn't yet expect a stop (it'd want "more text"), so EOS would sit deeper in the menu, and the cover-side pick at that position would have to reach into the tail of the cover distribution: a deep-tail glyph instead of a clean rank-1 cover token. EOS itself is never appended to the visible cover (it'd be stripped on detokenize and break the round-trip), so it acts only as a stop signal.
+The trailer's job is exactly that rank-1 EOS at position 4. Without the period before EOS, the model wouldn't yet expect a stop (it'd want "more text"), so EOS would sit deeper in the menu, and the cover-side pick at that position would have to reach into the tail of the cover distribution: a deep-tail glyph instead of a clean rank-1 cover token.
 
-After the rank-driven payload, the natural tail extends the cover with greedy continuations until the visible text lands on a sentence terminator (`.`, `!`, `?`) or the model's top-1 prediction is EOS. The decoder discards everything past the recovered EOS, so the tail is purely cosmetic; it just gives the visible stegotext a clean ending.
+The cover side walks those same two extra ranks, picking the rank-1 cover token at each:
+
+| pos | context | top-3 | rank | picked token |
+| --- | --- | --- | --- | --- |
+| 3 | `k + "Wood shelves creak"` | `.`, `,`, `for` | 1 | `"."` |
+| 4 | `k + "Wood shelves creak."` | EOS, And, Books | 1 | `"And"` |
+
+At pos 4 the model's top-1 is EOS, but EOS is never appended to the visible cover (it'd be stripped on detokenize and break the round-trip). The cover-side falls through to the next non-EOS token: `"And"`. The full rank-driven payload now spans five cover tokens: `"Wood shelves creak. And"`.
+
+That ends mid-thought. The natural tail extends the cover with greedy continuations until the visible text lands on a sentence terminator (`.`, `!`, `?`) or the model's top-1 prediction is EOS. Suppose the tail picks `"books"`, `"rest"`, `"in"`, `"dust"`, `"."` and stops on the period. The full stegotext:
+
+> Wood shelves creak. And books rest in dust.
+
+| segment | tokens | role |
+| --- | --- | --- |
+| rank-driven (pos 0-4) | Wood shelves creak. And | encodes the secret + trailer + EOS |
+| natural tail | books rest in dust. | cosmetic; decoder discards anything past EOS |
+
+The decoder walks the cover until it reconstructs EOS at pos 4 of the secret-side replay, then stops; cover tokens past that are ignored.
 
 The stegotext's token count is roughly the secret's, plus a few tokens for the trailer and a short optional natural tail. Both sides need the same model, the same cover prompt `k`, the same secret prefix `k'`, and the same trailer. The keyfile bundles all of these.
 
