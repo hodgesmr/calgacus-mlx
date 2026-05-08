@@ -36,8 +36,11 @@ The plan has changed. We must meet Tuesday night. Come to my office at midnight 
 encode to `stegotext.txt`:
 
 ```bash
-$ uv run calgacus encode -k keyfile.toml -s secret.txt -o stegotext.txt
-$ cat stegotext.txt
+uv run calgacus encode \
+    -k keyfile.toml \
+    -s secret.txt \
+    -o stegotext.txt
+cat stegotext.txt
 ```
 
 ```txt
@@ -47,7 +50,9 @@ The leftover sauce from the previous evening still somehow magically made the sp
 and then anyone with the same `keyfile.toml` can recover it:
 
 ```bash
-$ uv run calgacus decode -k keyfile.toml -s stegotext.txt
+uv run calgacus decode \
+    -k keyfile.toml \
+    -s stegotext.txt
 ```
 
 ```txt
@@ -59,17 +64,26 @@ The recovered text matches the original byte-for-byte. The stegotext, meanwhile,
 Hide a shell command:
 
 ```bash
-$ echo -n "curl -sIL http://example.com" | uv run calgacus encode -k keyfile.toml --quiet
+echo -n "curl -sIL http://example.com" \
+  | uv run calgacus encode \
+      -k keyfile.toml \
+      --quiet
 ```
 
 ```
 Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills.
 ```
 
-Decode-and-run in one shot:
+Decode and run in one shot:
 
 ```bash
-$ $(echo "Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills." | uv run calgacus decode -k keyfile.toml -s - --quiet)
+$(
+  echo "Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills." \
+    | uv run calgacus decode \
+        -k keyfile.toml \
+        -s - \
+        --quiet
+)
 ```
 
 ```
@@ -132,7 +146,9 @@ Scaffold a keyfile interactively or from flags. The keyfile is plain TOML and is
 
 ```bash
 uv run calgacus init   # interactive
-uv run calgacus init -o keyfile.toml --no-interactive \
+uv run calgacus init \
+    -o keyfile.toml \
+    --no-interactive \
     --cover-prompt "I have been wrestling with the grass in my front lawn all summer, and I finally" \
     --secret-prefix "The following is a fragment of a poem:" \
     --trailer graceful
