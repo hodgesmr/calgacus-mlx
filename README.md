@@ -285,15 +285,6 @@ model = "mlx-community/Mistral-7B-Instruct-v0.3-4bit"   # different family
 
 Both sides must use the **same model and the same quantization**. Mixing a 4-bit and an 8-bit copy of the same base model will not round-trip; the logits diverge enough to flip ranks.
 
-## Limitations
-
-- **Apple Silicon only.** MLX runs on Apple GPUs. A CUDA or MPS port is straightforward but not done here.
-- **Model-locked.** Both ends need the exact same model and quantization. Mixing a 4-bit and an 8-bit Llama 3.2 3B will not round-trip; the logits diverge.
-- **Cover prose has artifacts, and they cluster toward the end.** At positions where the secret-side rank is high, the cover-side pick is a low-probability token under the cover distribution, producing the occasional malformed word or odd phrasing. The effect compounds: each off-distribution pick widens the cover model's next-position distribution, making subsequent picks more likely to also fall into the tail, so artifacts cluster toward the end of the stegotext rather than spreading uniformly. Better cover prose comes from a larger model or a more specific cover prompt; the trade-off is speed.
-- **Stegotext length is comparable, not exact.** Because of BPE stability filtering and the trailer, the stegotext is typically 1x to 1.5x the secret's token count, not a strict 1:1. The paper's title says "of the same length"; this implementation produces "of comparable length."
-- **Not cryptographic.** The security claim is steganographic: a stegotext should be hard to distinguish from natural samples drawn from the cover distribution. There is no integrity guarantee, no forward secrecy, and no protection against active adversaries who know the keyfile is in use. If you need confidentiality against a serious adversary, use real cryptography (age, PGP, Signal). Stack steganography on top of cryptography only when you need plausible deniability of the message's existence.
-- **Tail text is decorative.** The encoder appends a short natural-sampled tail past EOS for a graceful ending; the decoder discards anything after EOS. The tail does not encode anything.
-
 ## Citation
 
 If you use this implementation in research, cite the protocol:
