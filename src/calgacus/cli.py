@@ -300,17 +300,21 @@ def init(
 @click.option(
     "-C", "--cover-prompt-file",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
+    default=None, help="Read cover prompt from file (- for stdin).",
 )
-@click.option("-p", "--secret-prefix", default=None)
+@click.option(
+    "-p", "--secret-prefix", default=None,
+    help="Secret prefix k' (overrides keyfile).",
+)
 @click.option(
     "-P", "--secret-prefix-file",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
+    default=None, help="Read secret prefix from file (- for stdin).",
 )
-@click.option("-m", "--model", default=None, help="MLX model ID.")
+@click.option("-m", "--model", default=None, help="MLX model ID (overrides keyfile).")
 @click.option(
     "--trailer", type=click.Choice(TRAILER_CHOICES), default=None,
+    help="Trailer mode (overrides keyfile).",
 )
 @click.option(
     "--tail-max-tokens", type=int, default=DEFAULT_TAIL_MAX_TOKENS,
@@ -410,33 +414,40 @@ def encode(
     type=click.Path(dir_okay=False, path_type=Path),
     default=None, help="Read stegotext from file (- for stdin).",
 )
-@click.option("-c", "--cover-prompt", default=None)
+@click.option(
+    "-c", "--cover-prompt", default=None,
+    help="Cover prompt k (overrides keyfile).",
+)
 @click.option(
     "-C", "--cover-prompt-file",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
+    default=None, help="Read cover prompt from file (- for stdin).",
 )
-@click.option("-p", "--secret-prefix", default=None)
+@click.option(
+    "-p", "--secret-prefix", default=None,
+    help="Secret prefix k' (overrides keyfile).",
+)
 @click.option(
     "-P", "--secret-prefix-file",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
+    default=None, help="Read secret prefix from file (- for stdin).",
 )
-@click.option("-m", "--model", default=None)
+@click.option("-m", "--model", default=None, help="MLX model ID (overrides keyfile).")
 @click.option(
     "--trailer", type=click.Choice(TRAILER_CHOICES), default=None,
+    help="Trailer mode (overrides keyfile).",
 )
 @click.option(
     "-k", "--key",
     type=click.Path(dir_okay=False, path_type=Path),
-    default=None,
+    default=None, help="Load model/k/k'/trailer from a TOML keyfile.",
 )
 @click.option(
     "-o", "--output",
     type=click.Path(dir_okay=False, path_type=Path),
     default=None, help="Write recovered secret to file (default: stdout).",
 )
-@click.option("--quiet", is_flag=True)
+@click.option("--quiet", is_flag=True, help="Suppress progress on stderr.")
 def decode(
     stego_arg: str | None,
     stego_file: Path | None,

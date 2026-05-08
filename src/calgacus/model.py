@@ -65,7 +65,7 @@ class MLXModel:
     def _resolve_eos(self) -> int:
         eos = self.tokenizer.eos_token_id
         if eos is None:
-            raise RuntimeError(
+            raise ValueError(
                 f"Tokenizer for {self.model_id!r} does not declare an EOS "
                 f"token. Calgacus uses EOS as the protocol stop sentinel."
             )
