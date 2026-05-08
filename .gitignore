@@ -18,6 +18,3 @@ build/
 # IDE
 .vscode/
 .idea/
-
-# specific
-resources/
