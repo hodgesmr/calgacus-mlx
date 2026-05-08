@@ -108,21 +108,21 @@ For intuition, a small worked example with a 3-token vocabulary (real models hav
 
 **Secret to ranks.** Walk the secret under `k'`. At each position, the model produces a ranked list of plausible next tokens; record the actual secret token's rank.
 
-```
-pos 0   context: k'                          top-3: Water, Plant, Trim          "Plant"    -> rank 2
-pos 1   context: k' + "Plant"                top-3: the, your, tomatoes         "tomatoes" -> rank 3
-pos 2   context: k' + "Plant tomatoes"       top-3: now, today, soon            "now"      -> rank 1
-```
+| pos | context | top-3 | secret token | rank |
+| --- | --- | --- | --- | --- |
+| 0 | `k'` | Water, Plant, Trim | `"Plant"` | 2 |
+| 1 | `k' + "Plant"` | the, your, tomatoes | `"tomatoes"` | 3 |
+| 2 | `k' + "Plant tomatoes"` | now, today, soon | `"now"` | 1 |
 
 Rank sequence: `[2, 3, 1]`.
 
 **Ranks to cover.** Walk the cover under `k`. At each position, pick the rank-`r_i`-th token from the model's ranked list.
 
-```
-pos 0   context: k                           top-3: Dust, Wood, Books           rank 2 -> "Wood"
-pos 1   context: k + "Wood"                  top-3: floors, panels, shelves     rank 3 -> "shelves"
-pos 2   context: k + "Wood shelves"          top-3: creak, hold, line           rank 1 -> "creak"
-```
+| pos | context | top-3 | rank | picked token |
+| --- | --- | --- | --- | --- |
+| 0 | `k` | Dust, Wood, Books | 2 | `"Wood"` |
+| 1 | `k + "Wood"` | floors, panels, shelves | 3 | `"shelves"` |
+| 2 | `k + "Wood shelves"` | creak, hold, line | 1 | `"creak"` |
 
 Stegotext: `"Wood shelves creak"`.
 
@@ -132,10 +132,10 @@ Two small mechanisms support those three steps. The encoder appends a fixed **tr
 
 The encoder also walks the trailer and EOS at the end of the secret-side stream. Using `.` as a one-token trailer:
 
-```
-pos 3   context: k' + "Plant tomatoes now"     top-3: ., !, ?                 "."  -> rank 1
-pos 4   context: k' + "Plant tomatoes now."    top-3: EOS, And, Then          EOS  -> rank 1
-```
+| pos | context | top-3 | secret token | rank |
+| --- | --- | --- | --- | --- |
+| 3 | `k' + "Plant tomatoes now"` | `.`, `!`, `?` | `"."` | 1 |
+| 4 | `k' + "Plant tomatoes now."` | EOS, And, Then | EOS | 1 |
 
 The trailer's job is exactly that rank-1 EOS at position 4. Without the period before EOS, the model wouldn't yet expect a stop (it'd want "more text"), so EOS would sit deeper in the menu, and the cover-side pick at that position would have to reach into the tail of the cover distribution: a deep-tail glyph instead of a clean rank-1 cover token. EOS itself is never appended to the visible cover (it'd be stripped on detokenize and break the round-trip), so it acts only as a stop signal.
 
