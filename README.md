@@ -37,9 +37,6 @@ encode to `stegotext.txt`:
 
 ```bash
 $ uv run calgacus encode -k keyfile.toml -s secret.txt -o stegotext.txt
-```
-
-```bash
 $ cat stegotext.txt
 ```
 
@@ -59,22 +56,39 @@ The plan has changed. We must meet Tuesday night. Come to my office at midnight 
 
 The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as a casual aside about a recent meal and an old friend, and gives no surface indication that it carries a hidden payload. There are still cover-quality artifacts at positions where the secret-side ranks are high: `feeder` as a stand-in for a more natural noun, and the missing space in `feeder.Then`. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
 
+Hide a shell command:
+
+```bash
+$ echo -n "curl -sIL http://example.com" | uv run calgacus encode -k keyfile.toml --quiet
+```
+
+```
+Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills.
+```
+
+Decode-and-run in one shot:
+
+```bash
+$ $(echo "Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills." | uv run calgacus decode -k keyfile.toml -s - --quiet)
+```
+
+```
+HTTP/1.1 200 OK
+Date: Fri, 08 May 2026 03:41:36 GMT
+Content-Type: text/html
+Connection: keep-alive
+Server: cloudflare
+Last-Modified: Wed, 06 May 2026 14:17:14 GMT
+Allow: GET, HEAD
+Accept-Ranges: bytes
+Age: 3997
+cf-cache-status: HIT
+```
+
 To generate a keyfile that bundles the model, cover prompt, and protocol settings that sender and receiver share:
 
 ```bash
 $ uv run calgacus init -o keyfile.toml
-
-Welcome. Let's create a Calgacus keyfile. The keyfile bundles
-the model, cover prompt, and other settings that sender and
-receiver must share. Both parties need an identical copy of
-this file.
-
-Model [mlx-community/Llama-3.2-3B-Instruct-4bit]:
-Cover prompt: The spaghetti was delicious and the breadsticks were a fantastic side dish, but the salad was stale.
-Secret prefix: The following is an important covert message. Please read it carefully.
-
-Wrote keyfile.toml.
-Share this file with anyone who needs to decode your messages.
 ```
 
 ## How it works
