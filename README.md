@@ -59,7 +59,7 @@ uv run calgacus decode \
 The plan has changed. We must meet Tuesday night. Come to my office at midnight and bring the money.
 ```
 
-The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as a casual aside about a recent meal and an old friend, and gives no surface indication that it carries a hidden payload. There are still cover-quality artifacts at positions where the secret-side ranks are high: `feeder` as a stand-in for a more natural noun, and the missing space in `feeder.Then`. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
+The recovered text matches the original byte-for-byte. The stegotext, meanwhile, reads as a casual aside about a recent meal and an old friend, and gives no surface indication that it carries a hidden payload. There may still be cover-quality artifacts at positions where the secret-side ranks are high. See [Tuning the keyfile](#tuning-the-keyfile) for how to push these down.
 
 Hide a shell command:
 
