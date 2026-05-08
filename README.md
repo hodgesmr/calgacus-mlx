@@ -150,7 +150,7 @@ At pos 4 the model's top-1 is EOS, but EOS is never appended to the visible cove
 
 That ends mid-thought. The natural tail extends the cover with greedy continuations until the visible text lands on a sentence terminator (`.`, `!`, `?`) or the model's top-1 prediction is EOS. Suppose the tail picks `"books"`, `"rest"`, `"in"`, `"dust"`, `"."` and stops on the period. The full stegotext:
 
-> Wood shelves creak. And books rest in dust.
+Stegotext:  `"Wood shelves creak. And books rest in dust."`
 
 | segment | tokens | role |
 | --- | --- | --- |
@@ -185,7 +185,7 @@ uv run calgacus init   # interactive
 uv run calgacus init \
     -o keyfile.toml \
     --no-interactive \
-    --cover-prompt "I have been wrestling with the grass in my front lawn all summer, and I finally" \
+    --cover-prompt "I have been struggling with the grass in my front lawn all summer, and" \
     --secret-prefix "The following is a fragment of a poem:" \
     --trailer graceful
 ```
