@@ -67,7 +67,7 @@ Decode and run in one shot:
 
 ```bash
 $(
-  echo "Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills." \
+  echo -n "Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills." \
     | uv run calgacus decode \
         -k keyfile.toml \
         -s - \
