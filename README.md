@@ -100,7 +100,7 @@ Concretely:
 - **Cover side**. The encoder generates one cover token per rank `r_i`, picking the rank-`r_i`-th most likely token under the cover prompt `k` (and the cover-so-far), then extends the cover with a short greedy natural tail. Detokenized, the full cover-token sequence is the stegotext.
 - **Decode**. The decoder tokenizes `k + stegotext`, walks the cover tokens, looks up each one's rank under the cover-side distribution to recover `r_i`, then replays those ranks against the secret-side distribution. Stop when EOS is hit.
 
-For intuition, a small worked example with a 3-token vocabulary (real models have ~128k tokens; the mechanic is the same):
+As an illustration, a small worked example with a 3-token vocabulary:
 
 - `k'` = `"The following is a garden reminder:"`
 - secret = `"Plant tomatoes now"`
@@ -130,34 +130,38 @@ Stegotext: `"Wood shelves creak"`.
 
 Two small mechanisms support those three steps. The encoder appends a fixed **trailer** (default `.\n\n`) to the secret stream before EOS so the model rates EOS at low rank under the secret-side context. This keeps the cover-side pick at the EOS position from being a deep-tail glyph. The encoder also appends a few greedy cover tokens after the rank-driven payload, called the **natural tail**, so the visible stegotext lands on a sentence boundary; the decoder discards anything past the recovered EOS, so the tail is purely cosmetic.
 
-The encoder also walks the trailer and EOS at the end of the secret-side stream. Using `.` as a one-token trailer:
+The encoder also walks the trailer and EOS at the end of the secret-side stream. The trailer is fixed by the implementation (`.\n\n` for the default graceful mode, which tokenizes as two tokens: `.` then `\n\n`), and EOS is the stop sentinel; all three are predetermined, not picked from the model's distribution. The walk just records each fixed token's rank in the model's menu at its position:
 
-| pos | context | top-3 | secret token | rank |
+| pos | context | top-3 | fixed token | rank |
 | --- | --- | --- | --- | --- |
-| 3 | `k' + "Plant tomatoes now"` | `.`, `!`, `?` | `"."` | 1 |
-| 4 | `k' + "Plant tomatoes now."` | EOS, And, Then | EOS | 1 |
+| 3 | `k' + "Plant tomatoes now"` | `.`, `,`, `before` | `"."` | 1 |
+| 4 | `k' + "Plant tomatoes now."` | `\n\n`, EOS, And | `"\n\n"` | 1 |
+| 5 | `k' + "Plant tomatoes now.\n\n"` | EOS, Plant, Water | EOS | 1 |
 
-The trailer's job is exactly that rank-1 EOS at position 4. Without the period before EOS, the model wouldn't yet expect a stop (it'd want "more text"), so EOS would sit deeper in the menu, and the cover-side pick at that position would have to reach into the tail of the cover distribution: a deep-tail glyph instead of a clean rank-1 cover token.
+The trailer's job is exactly that rank-1 EOS at position 5. Without `.\n\n` before EOS, the model wouldn't yet expect a stop (it'd want more text), so EOS would sit deeper in the menu, and the cover-side pick at that position would have to reach into the tail of the cover distribution and create less-plausible output.
 
-The cover side walks those same two extra ranks, picking the rank-1 cover token at each:
+The cover side walks those same three extra ranks, picking the rank-1 cover token at each:
 
 | pos | context | top-3 | rank | picked token |
 | --- | --- | --- | --- | --- |
 | 3 | `k + "Wood shelves creak"` | `.`, `,`, `for` | 1 | `"."` |
-| 4 | `k + "Wood shelves creak."` | EOS, And, Books | 1 | `"And"` |
+| 4 | `k + "Wood shelves creak."` | `\n\n`, EOS, The | 1 | `"\n\n"` |
+| 5 | `k + "Wood shelves creak.\n\n"` | EOS, Books, Old | 1 | `"Books"` |
 
-At pos 4 the model's top-1 is EOS, but EOS is never appended to the visible cover (it'd be stripped on detokenize and break the round-trip). The cover-side falls through to the next non-EOS token: `"And"`. The full rank-driven payload now spans five cover tokens: `"Wood shelves creak. And"`.
+At pos 5 the model's top-1 is EOS, but EOS is never appended to the visible cover (it'd be stripped on detokenize and break the round-trip). The cover-side falls through to the next non-EOS token: `"Books"`. The full rank-driven payload now spans six cover tokens: `"Wood shelves creak.\n\nBooks"`.
 
-That ends mid-thought. The natural tail extends the cover with greedy continuations until the visible text lands on a sentence terminator (`.`, `!`, `?`) or the model's top-1 prediction is EOS. Suppose the tail picks `"books"`, `"rest"`, `"in"`, `"dust"`, `"."` and stops on the period. The full stegotext:
+That ends mid-thought. The natural tail then extends the cover with greedy continuations and stops when either the cover lands on a sentence terminator (`.`, `!`, `?`) or the model's top-1 prediction is EOS. Suppose the tail picks `"rest"`, `"in"`, `"dust"`, `"."` and stops on the period. The full stegotext:
 
-Stegotext:  `"Wood shelves creak. And books rest in dust."`
+> Wood shelves creak.
+>
+> Books rest in dust.
 
 | segment | tokens | role |
 | --- | --- | --- |
-| rank-driven (pos 0-4) | Wood shelves creak. And | encodes the secret + trailer + EOS |
-| natural tail | books rest in dust. | cosmetic; decoder discards anything past EOS |
+| rank-driven (pos 0-5) | `Wood shelves creak.\n\nBooks` | encodes the secret + trailer + EOS |
+| natural tail | `rest in dust.` | cosmetic; decoder discards anything past EOS |
 
-The decoder walks the cover until it reconstructs EOS at pos 4 of the secret-side replay, then stops; cover tokens past that are ignored.
+The decoder walks the cover until it reconstructs EOS at pos 5 of the secret-side replay, then stops; cover tokens past that are ignored.
 
 The stegotext's token count is roughly the secret's, plus a few tokens for the trailer and a short optional natural tail. Both sides need the same model, the same cover prompt `k`, the same secret prefix `k'`, and the same trailer. The keyfile bundles all of these.
 
