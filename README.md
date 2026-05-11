@@ -206,15 +206,21 @@ Both parties need an identical copy of the keyfile. Treat it like a shared secre
 Reads the secret from a positional argument, `--secret-file` (with `-` for stdin), or stdin (default). Writes stegotext to stdout or `--output`.
 
 ```bash
-uv run calgacus encode -k keyfile.toml -s secret.txt -o stego.txt
+uv run calgacus encode \
+    -k keyfile.toml \
+    -s secret.txt \
+    -o stego.txt
 ```
 
 ```bash
-uv run calgacus encode "hello world" -k keyfile.toml
+uv run calgacus encode "hello world" \
+    -k keyfile.toml
 ```
 
 ```bash
-echo "hello world" | uv run calgacus encode -k keyfile.toml
+echo "hello world" \
+    | uv run calgacus encode \
+        -k keyfile.toml
 ```
 
 You can optionally pass `--tail-max-tokens N` to bound the natural tail; default is 32. Set to 0 to skip the tail entirely and end the stegotext at the rank-driven payload's last cover token (which may not land on a sentence boundary).
@@ -224,11 +230,15 @@ You can optionally pass `--tail-max-tokens N` to bound the natural tail; default
 Reads stegotext, recovers the secret.
 
 ```bash
-uv run calgacus decode -k keyfile.toml -s stego.txt
+uv run calgacus decode \
+    -k keyfile.toml \
+    -s stego.txt
 ```
 
 ```bash
-cat stego.txt | uv run calgacus decode -k keyfile.toml
+cat stego.txt \
+    | uv run calgacus decode \
+        -k keyfile.toml
 ```
 
 ### Keyfile format
@@ -246,14 +256,14 @@ trailer = "graceful"
 | --- | --- |
 | `model` | HuggingFace model ID. Both ends must use the same one (and the same quantization). |
 | `cover_prompt` | The opening text of the cover passage. Treat it as the first sentence(s) the model continues into a stegotext, not an instruction. See [Cover prompt](#cover-prompt) for why. |
-| `secret_prefix` | Optional incipit prepended to the secret. A genre-matched prefix lowers the secret-side ranks and improves cover quality, especially for non-prose secrets like code, chess PGN, or structured data. |
+| `secret_prefix` | Optional incipit prepended to the secret. A genre-matched prefix lowers the secret-side ranks and improves cover quality, especially for non-prose secrets like code or structured data. |
 | `trailer` | `graceful` (default) appends `.\n\n` before EOS so the protocol's stop sentinel sits at a low rank in the cover distribution. `eos-only` skips the trailer; cover quality at the EOS position is slightly worse. |
 
 Flags on `encode` and `decode` override individual keyfile fields, so the same keyfile can be used as a base with per-call adjustments.
 
 ## Tuning the keyfile
 
-The cover prompt, secret prefix, and model choice all directly affect stegotext quality. A weak prompt produces a stegotext that reads like nonsense even though round-trip is exact. A small model produces broad distributions and more deep-tail artifacts. Spend time on these.
+The cover prompt, secret prefix, and model choice all directly affect stegotext quality. A weak prompt produces a stegotext that reads like nonsense even though round-trip is exact. A small model produces broad distributions and more deep-tail artifacts.
 
 ### Cover prompt
 
@@ -271,16 +281,15 @@ Three rules of thumb for incipits:
 2. **Pin down topic, register, and audience.** Specific incipits keep the natural distribution narrow, which means even moderate-rank cover picks stay readable. Vague incipits collapse into the deep tail and produce off-topic glyphs.
 3. **Continue the thought.** The model picks up where you stop. Mid-sentence endings (colon, comma, or partway through) give the sharpest continuation lane, but a single complete thought ending in a period also works well; the model just keeps going in the same register. What hurts is multiple short period-terminated sentences in a row; that primes the model for a paragraph break, which often shows up in the cover as a stray newline mid-stegotext.
 
-Why instructions don't work: instruction-tuned LLMs (like Llama 3.2 Instruct) expect chat-formatted input (`<|start_header_id|>user<|end_header_id|>...`) when given a question. Calgacus feeds the prompt as raw text, so the model treats it as a passage to continue. Instructions in raw-text mode confuse the model's next-token distribution; incipits do not.
+Instructions don't work because instruction-tuned LLMs (like Llama 3.2 Instruct) expect chat-formatted input (`<|start_header_id|>user<|end_header_id|>...`) when given a question. Calgacus feeds the prompt as raw text, so the model treats it as a passage to continue. Instructions in raw-text mode confuse the model's next-token distribution; incipits do not.
 
 ### Secret prefix
 
 The secret prefix `k'` conditions the secret-side distribution, which determines the rank values that get encoded into the cover. A well-matched `k'` makes the secret tokens more predictable, which means lower secret-side ranks, which means cover-side picks land at lower ranks in the cover distribution and read more naturally.
 
-For prose secrets in ordinary English, a generic prefix is fine or can be omitted. For non-prose secrets (a chess game in PGN, a Python snippet, a memo with a fixed format), or for prose with a strong genre signal (a covert message, a poem, a technical email), telling the LLM what kind of text to expect can drop the average rank of secret tokens by an order of magnitude.
+For prose secrets in ordinary English, a generic prefix is fine or can be omitted. For non-prose secrets (a Python snippet, a memo with a fixed format), or for prose with a strong genre signal (a covert message, a poem, a technical email), telling the LLM what kind of text to expect can drop the average rank of secret tokens by an order of magnitude.
 
 ```toml
-secret_prefix = "The following is a chess game in PGN format:"
 secret_prefix = "The following is Python source code:"
 secret_prefix = "The following is a meeting agenda:"
 secret_prefix = "The following is a brief covert message:"
@@ -291,15 +300,7 @@ secret_prefix = "The following is a fragment of a poem:"
 
 The default is `mlx-community/Llama-3.2-3B-Instruct-4bit`: small (~2 GB), fast on Apple Silicon, good enough for short secrets. It's also the cheapest model in the family, which means its next-token distributions are broader at typical positions; rank-`r_i`-th cover picks at moderate `r_i` fall into the tail more often than a larger model's would, and those tail picks are what produce the visible artifacts in the stegotext.
 
-A larger model trades speed for cover quality. Roughly: a 7-8B model is ~3x slower per encoded token than the 3B default, but its sharper distributions push moderate-rank picks toward natural tokens and reduce the cascade effect along the cover.
-
-Tested alternatives:
-
-```toml
-model = "mlx-community/Llama-3.1-8B-Instruct-4bit"      # same family, larger
-model = "mlx-community/Qwen2.5-7B-Instruct-4bit"        # different family
-model = "mlx-community/Mistral-7B-Instruct-v0.3-4bit"   # different family
-```
+A larger model trades speed for cover quality. Roughly: a 7-8B model has sharper distributions that push moderate-rank picks toward natural tokens and reduce the cascade effect along the cover.
 
 Both sides must use the **same model and the same quantization**.
 
