@@ -15,7 +15,7 @@ uv run calgacus init -o keyfile.toml
 ```
 
 ```toml
-model = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+model = "mlx-community/SmolLM3-3B-Base-8bit"
 cover_prompt = "The spaghetti was delicious and the breadsticks were a fantastic side dish, but the salad was stale."
 secret_prefix = "The following is an important covert message. Please read it carefully."
 trailer = "graceful"
@@ -37,7 +37,7 @@ uv run calgacus encode \
 
 The `stegotext.txt` it produces: 
 
-> The leftover sauce from the previous evening still somehow magically made the spaghetti from that night taste fresh, like its own feeder.Then, I had a conversation with a friend who had recently moved to a new city.
+> The plate had no dressing, which left tiny bits and large chunks that didn't go very well. The salad Zac finished was a bit better, but still not great.
 
 Anyone with the same `keyfile.toml` can recover it:
 
@@ -61,13 +61,13 @@ echo -n "curl -sIL http://example.com" \
 ```
 
 Gives the stegotext: 
-> Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills.
+> numberOfGuests input variable is used to reason JavaScript code.
 
 Decode and run in one shot:
 
 ```bash
 $(
-  echo -n "Najeh had always dreamed of being a video۱۳ game designer, and he had spent countless hours studying the craft and practicing his skills." \
+  echo -n "numberOfGuests input variable is used to reason JavaScript code." \
     | uv run calgacus decode \
         -k keyfile.toml \
         -s - \
@@ -176,7 +176,7 @@ uv sync
 uv run calgacus --help
 ```
 
-The first encode or decode call downloads the default model (`mlx-community/Llama-3.2-3B-Instruct-4bit`) into your HuggingFace cache.
+The first encode or decode call downloads the default model (`mlx-community/SmolLM3-3B-Base-8bit`, ~3.3 GB) into your HuggingFace cache.
 
 ## Usage
 
@@ -246,7 +246,7 @@ cat stego.txt \
 A keyfile is plain TOML with four fields:
 
 ```toml
-model = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+model = "mlx-community/SmolLM3-3B-Base-8bit"
 cover_prompt = "I have been struggling with the grass in my front lawn all summer, and"
 secret_prefix = "The following is a fragment of a poem:"
 trailer = "graceful"
@@ -281,7 +281,7 @@ Three rules of thumb for incipits:
 2. **Pin down topic, register, and audience.** Specific incipits keep the natural distribution narrow, which means even moderate-rank cover picks stay readable. Vague incipits collapse into the deep tail and produce off-topic glyphs.
 3. **Continue the thought.** The model picks up where you stop. Mid-sentence endings (colon, comma, or partway through) give the sharpest continuation lane, but a single complete thought ending in a period also works well; the model just keeps going in the same register. What hurts is multiple short period-terminated sentences in a row; that primes the model for a paragraph break, which often shows up in the cover as a stray newline mid-stegotext.
 
-Instructions don't work because instruction-tuned LLMs (like Llama 3.2 Instruct) expect chat-formatted input (`<|start_header_id|>user<|end_header_id|>...`) when given a question. Calgacus feeds the prompt as raw text, so the model treats it as a passage to continue. Instructions in raw-text mode confuse the model's next-token distribution; incipits do not.
+Instructions don't work because calgacus feeds the prompt as raw text, with no chat template. An instruction-tuned model expects chat-formatted input (`<|start_header_id|>user<|end_header_id|>...`) when given a question, and a base model like the default `SmolLM3-3B-Base` has no notion of following instructions at all — both simply continue whatever literal text they're handed. An instruction in raw-text mode just confuses the next-token distribution; an incipit puts the model in a clear continuation lane.
 
 ### Secret prefix
 
@@ -298,9 +298,9 @@ secret_prefix = "The following is a fragment of a poem:"
 
 ### Model
 
-The default is `mlx-community/Llama-3.2-3B-Instruct-4bit`: small (~2 GB), fast on Apple Silicon, good enough for short secrets. It's also the cheapest model in the family, which means its next-token distributions are broader at typical positions; rank-`r_i`-th cover picks at moderate `r_i` fall into the tail more often than a larger model's would, and those tail picks are what produce the visible artifacts in the stegotext.
+The default is `mlx-community/SmolLM3-3B-Base-8bit`: a compact 3B model (~3.3 GB at 8-bit) that runs comfortably on 8 GB Apple Silicon and produces notably cleaner cover than 4-bit models of similar size. Two things help. It's a **base** model, not instruction-tuned, so in raw-text continuation mode it stays on-distribution instead of drifting toward chat behavior. And 8-bit quantization keeps its next-token distributions sharp, so rank-`r_i`-th cover picks at moderate `r_i` land on natural tokens rather than deep-tail glyphs. Sub-3B models and aggressive 4-bit quantization broaden those distributions and push more picks into the tail — the tail picks are what surface as visible artifacts (foreign scripts, rare unicode) in a stegotext.
 
-A larger model trades speed for cover quality. Roughly: a 7-8B model has sharper distributions that push moderate-rank picks toward natural tokens and reduce the cascade effect along the cover.
+A larger model trades speed and memory for cover quality. Roughly: a 7-8B model has sharper distributions still, which push moderate-rank picks toward natural tokens and reduce the cascade effect along the cover. On 8 GB of unified memory a 3B-class model at 4- to 8-bit is the practical ceiling; 7-8B models want more headroom.
 
 Both sides must use the **same model and the same quantization**.
 

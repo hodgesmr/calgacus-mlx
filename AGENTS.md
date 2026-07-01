@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 calgacus-mlx is an MLX implementation of the [Calgacus protocol](https://arxiv.org/abs/2510.20075) for LLM-based text steganography. The README is the canonical user-facing documentation; this file is for code-touching context that isn't there.
 
-Apple Silicon only (MLX is Apple-specific). Default model is `mlx-community/Llama-3.2-3B-Instruct-4bit`, downloaded to the HuggingFace cache on first use.
+Apple Silicon only (MLX is Apple-specific). Default model is `mlx-community/SmolLM3-3B-Base-8bit`, downloaded to the HuggingFace cache on first use. It is a base (non-instruct) model with a BOS-less tokenizer; see invariant 6 for why the second matters.
 
 ## Running
 
@@ -41,6 +41,7 @@ Encoder and decoder must produce byte-identical logits at every position. Round-
 3. **BPE canonicality filter.** `core._is_canonical` ensures cover-side picks do not disturb upstream BPE merges. Without it, the decoder's joint re-tokenization desynchronizes from the encoder's token stream and the round-trip silently fails.
 4. **Position-0 leading-space filter.** The first cover token must be in `leading_space_token_ids` (regular space-prefix, *not* newline- or tab-prefix). Symmetric with the encoder's `lstrip(' ')` of the visible stegotext and the decoder's space-prepend before tokenizing.
 5. **Asymmetric tokenization across the secret/cover halves.** `ranks_for_secret` tokenizes `k'` and the secret separately and prepends a leading space to the secret. The cover side uses joint tokenization via `split_after_prefix`. The asymmetry is intentional: the secret has no visible boundary to round-trip across, while the cover side does.
+6. **BOS-aware initial context.** `core._initial_context` builds the first forward-pass context and must return the *same* tokens on encoder and decoder. Tokenizers with a BOS token (Llama, Gemma) get `[BOS] + prefix_ids`. BOS-less tokenizers (SmolLM3, Qwen) get `prefix_ids` as-is when non-empty, and `[EOS]` (the pretraining document boundary) when the prefix is empty — otherwise the forward pass would receive zero tokens and crash. The empty-prefix + BOS-less case is *document-initial*: `core._document_initial` gates it, and in that case `ranks_for_secret` skips the leading-space prepend from invariant 5 (a document-initial word has no leading space) and `secret_from_ranks` skips the matching strip. Both sides gate on the same predicate, so they stay in lockstep. This path is exercised by the default model (BOS-less) whenever `secret_prefix` is empty.
 
 There is no protocol versioning. Any change that affects rank values, cover token selection order, the trailer/EOS scheme, or the position-0 filter breaks every stegotext encoded under the previous version. Treat such changes as breaking and call them out explicitly in commits.
 

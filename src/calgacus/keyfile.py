@@ -21,7 +21,7 @@ class KeyFile:
     """Protocol parameters shared between sender and receiver.
 
     Fields:
-        model: HuggingFace MLX model ID (e.g. "mlx-community/Llama-3.2-3B-Instruct-4bit").
+        model: HuggingFace MLX model ID (e.g. "mlx-community/SmolLM3-3B-Base-8bit").
             Both sides must use the same model for identical tokenization
             and identical rank sequences.
         cover_prompt: The cover-side prompt `k`. Steers the topic and tone

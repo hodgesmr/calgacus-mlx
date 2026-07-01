@@ -30,7 +30,7 @@ from .model import MLXModel
 from .termination import Trailer
 
 
-DEFAULT_MODEL = "mlx-community/Llama-3.2-3B-Instruct-4bit"
+DEFAULT_MODEL = "mlx-community/SmolLM3-3B-Base-8bit"
 DEFAULT_TAIL_MAX_TOKENS = 32
 TRAILER_CHOICES = [t.value for t in Trailer]
 

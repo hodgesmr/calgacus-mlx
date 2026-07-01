@@ -57,7 +57,7 @@ class MLXModel:
                 f"architecture is not supported by your installed "
                 f"mlx-lm version, or the weights use a non-standard "
                 f"quantization layout. Try a tested model such as "
-                f"'mlx-community/Llama-3.2-3B-Instruct-4bit'."
+                f"'mlx-community/SmolLM3-3B-Base-8bit'."
             ) from e
         self._eos_token_id = self._resolve_eos()
         self._always_stable_token_ids: frozenset[int] | None = None
