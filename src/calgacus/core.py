@@ -17,12 +17,14 @@ recover ranks for each stegotext token, then walk those ranks under
 Forward-pass strategy:
 
 All four functions use the same cache-based incremental forward
-pattern: prefill a fresh KV cache with `[BOS] + prompt`, then extend
-by one token per step via `MLXModel.forward_step`. Using one strategy
-on every call site guarantees that encoder and decoder see
-byte-identical logits at the same context, which the rank ordering is
-sensitive to (small numerical differences can flip ranks of
-close-logit tokens and desynchronize the round-trip).
+pattern: prefill a fresh KV cache with the initial context built by
+`_initial_context` (`[BOS] + prompt` for tokenizers with a BOS token,
+a BOS-less variant otherwise), then extend by one token per step via
+`MLXModel.forward_step`. Using one strategy on every call site
+guarantees that encoder and decoder see byte-identical logits at the
+same context, which the rank ordering is sensitive to (small numerical
+differences can flip ranks of close-logit tokens and desynchronize the
+round-trip).
 """
 
 from __future__ import annotations
@@ -40,21 +42,54 @@ from .tokens import split_after_prefix
 
 
 def _initial_context(model: MLXModel, prefix_ids: list[int]) -> list[int]:
-    """Prepend BOS to `prefix_ids` for a model-natural initial context.
+    """Build a non-empty, model-natural initial context from `prefix_ids`.
 
-    The model expects sequences to start with BOS. Empty prefix
-    becomes just `[BOS]`, which is the safe minimum context to
-    compute next-token logits. Non-empty prefix becomes
-    `[BOS] + prefix_ids`. Both encoder and decoder do this, so they
-    see the same context and produce the same rank sequence.
+    A fresh forward pass needs at least one token to produce logits, and
+    both encoder and decoder must build the *same* starting context or
+    their rank sequences diverge. There are two tokenizer families:
 
-    If the tokenizer does not declare a BOS token, the prefix is
-    returned as-is and the caller must ensure it is non-empty.
+    - Tokenizers with a BOS token (Llama 3, Gemma): the model expects
+      sequences to start with it. Empty prefix becomes just `[BOS]`;
+      non-empty prefix becomes `[BOS] + prefix_ids`.
+
+    - Tokenizers without a BOS token (SmolLM3, Qwen): the model was
+      trained on sequences that begin directly with content, so a
+      non-empty prefix is already a valid start and passes through
+      unchanged. An empty prefix, however, would leave the forward pass
+      with zero tokens. We seed it with EOS: in the GPT-2/Llama-3/Qwen
+      pretraining convention the end-of-text token is the document
+      separator, so the next-token distribution right after it is the
+      "document-initial" distribution — the natural stand-in for a
+      start-of-sequence marker, and guaranteed to exist (calgacus
+      requires an EOS token).
+
+    Every call site runs this, so encoder and decoder stay in lockstep.
     """
     bos_id = model.tokenizer.bos_token_id
-    if bos_id is None:
+    if bos_id is not None:
+        return [int(bos_id)] + list(prefix_ids)
+    if prefix_ids:
         return list(prefix_ids)
-    return [int(bos_id)] + list(prefix_ids)
+    return [model.eos_token_id]
+
+
+def _document_initial(model: MLXModel, prefix_ids: list[int]) -> bool:
+    """True when the secret sits at a genuine document start.
+
+    Holds only for tokenizers without a BOS token AND an empty secret
+    prefix: there is no preceding context at all, so `_initial_context`
+    seeds the forward pass with EOS (the pretraining document boundary)
+    and the secret's first token should be document-initial — a
+    capitalized word with no leading space, the form that naturally
+    follows an end-of-text boundary.
+
+    In every other case the secret continues after real prose (a BOS
+    marker, or a non-empty prefix), where a leading-space first token is
+    the natural form. Encoder (`ranks_for_secret`) and decoder
+    (`secret_from_ranks`) both consult this so their space handling
+    stays symmetric.
+    """
+    return model.tokenizer.bos_token_id is None and not prefix_ids
 
 
 _CANONICALITY_WINDOW = 4
@@ -247,7 +282,14 @@ def ranks_for_secret(
     # off-distribution tokens (foreign scripts, rare unicode) at the
     # start of the stegotext. The decoder strips this prepended space
     # in `secret_from_ranks`.
-    e_tokens = model.tokenize(" " + secret_text)
+    #
+    # Exception: a document-initial secret (no BOS token, empty prefix)
+    # follows an end-of-text boundary rather than prose, where a
+    # leading-space token is instead the unnatural, deep-tail form. There
+    # we tokenize the secret as-is so its first token is a normal
+    # document-initial word. `secret_from_ranks` mirrors this.
+    lead = "" if _document_initial(model, prefix_ids) else " "
+    e_tokens = model.tokenize(lead + secret_text)
 
     eos = model.eos_token_id
     if eos in e_tokens:
@@ -449,8 +491,10 @@ def secret_from_ranks(
     # to `secret_text` before tokenizing. If the user's original secret
     # started with whitespace, only the encoder's added space is
     # removed; subsequent leading whitespace from the user's input is
-    # preserved.
-    if text.startswith(" "):
+    # preserved. A document-initial secret had no space prepended (see
+    # `ranks_for_secret`), so we skip the strip to keep the round-trip
+    # exact for secrets that legitimately begin with a space.
+    if not _document_initial(model, prefix_ids) and text.startswith(" "):
         text = text[1:]
     return text
 
