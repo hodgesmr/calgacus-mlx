@@ -298,9 +298,11 @@ secret_prefix = "The following is a fragment of a poem:"
 
 ### Model
 
-The default is `mlx-community/SmolLM3-3B-Base-8bit`: a compact 3B model (~3.3 GB at 8-bit) that runs comfortably on 8 GB Apple Silicon and produces notably cleaner cover than 4-bit models of similar size. Two things help. It's a **base** model, not instruction-tuned, so in raw-text continuation mode it stays on-distribution instead of drifting toward chat behavior. And 8-bit quantization keeps its next-token distributions sharp, so rank-`r_i`-th cover picks at moderate `r_i` land on natural tokens rather than deep-tail glyphs. Sub-3B models and aggressive 4-bit quantization broaden those distributions and push more picks into the tail — the tail picks are what surface as visible artifacts (foreign scripts, rare unicode) in a stegotext.
+The default is `mlx-community/SmolLM3-3B-Base-8bit`, a 3B model that takes about 3.3 GB at 8-bit and runs comfortably on 8 GB of Apple Silicon. It is a base model rather than an instruction-tuned one, which fits how calgacus uses it. The cover prompt is fed as raw text and continued as prose. An instruction-tuned model tends to read that same prompt as a request and answer it, returning chat formatting or a change in register instead of a continuation.
 
-A larger model trades speed and memory for cover quality. Roughly: a 7-8B model has sharper distributions still, which push moderate-rank picks toward natural tokens and reduce the cascade effect along the cover. On 8 GB of unified memory a 3B-class model at 4- to 8-bit is the practical ceiling; 7-8B models want more headroom.
+Model choice affects the stegotext, not the round-trip. Any model that produces the same logits on the encode and decode sides recovers the secret exactly, so correctness holds regardless of the model class. Cover quality is the reason to prefer one model over another. A dense base model with competent, wide-ranging continuations keeps moderately ranked cover picks readable. Multimodal models add vision and audio weights that do nothing for text generation and can fail to load through a text-only path. Mixture-of-experts models round-trip without trouble, but their routing magnifies small numerical differences, which makes rank agreement more fragile for no improvement in the prose.
+
+8-bit quantization keeps the model's next-token distributions close to the full-precision model, so a moderately ranked cover pick still lands on a plausible token. Smaller models and heavier 4-bit quantization spread probability onto worse tokens, which show up in the stegotext as artifacts like foreign scripts or rare unicode. A larger model would improve cover further but needs more memory.
 
 Both sides must use the **same model and the same quantization**.
 
